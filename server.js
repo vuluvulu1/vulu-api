@@ -12,6 +12,7 @@ mongoose.connect(process.env.MONGO_URL)
 
 // Route'lar
 app.use('/auth', require('./routes/auth'));
+app.use('/manifest', require('./routes/manifest'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));
