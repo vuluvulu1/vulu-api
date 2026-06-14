@@ -1,70 +1,66 @@
 const express = require('express');
-const router = express.Router();
+const axios   = require('axios');
+const router  = express.Router();
+const jwt     = require('jsonwebtoken');
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
-const GITHUB_REPO  = process.env.GITHUB_REPO;
+const GITHUB_TOKEN  = process.env.GITHUB_TOKEN;
+const GITHUB_REPO   = process.env.GITHUB_REPO;
 const MANIFEST_PATH = process.env.GITHUB_MANIFEST_PATH;
 const GITHUB_API    = 'https://api.github.com';
 
-// GitHub'dan manifest'i çek
+const githubHeaders = {
+    'Authorization': `Bearer ${GITHUB_TOKEN}`,
+    'Accept':        'application/vnd.github+json',
+    'X-GitHub-Api-Version': '2022-11-28'
+};
+
 async function getManifest() {
-    const res = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/contents/${MANIFEST_PATH}`, {
-        headers: {
-            'Authorization': `Bearer ${GITHUB_TOKEN}`,
-            'Accept': 'application/vnd.github+json'
-        }
-    });
-
-    if (res.status === 404) return { content: { instances: {} }, sha: null };
-    if (!res.ok) throw new Error(`GitHub API hatası: ${res.status}`);
-
-    const data = await res.json();
-    const content = JSON.parse(Buffer.from(data.content, 'base64').toString('utf8'));
-    return { content, sha: data.sha };
+    try {
+        const res = await axios.get(
+            `${GITHUB_API}/repos/${GITHUB_REPO}/contents/${MANIFEST_PATH}`,
+            { headers: githubHeaders }
+        );
+        const content = JSON.parse(Buffer.from(res.data.content, 'base64').toString('utf8'));
+        return { content, sha: res.data.sha };
+    } catch (err) {
+        if (err.response?.status === 404)
+            return { content: { instances: {} }, sha: null };
+        throw new Error(`GitHub getManifest hatası: ${err.message}`);
+    }
 }
 
-// GitHub'a manifest'i push'la
 async function pushManifest(content, sha) {
     const body = {
-        message: `chore: manifest güncellendi`,
+        message: 'chore: manifest güncellendi',
         content: Buffer.from(JSON.stringify(content, null, 2)).toString('base64'),
         ...(sha && { sha })
     };
 
-    const res = await fetch(`${GITHUB_API}/repos/${GITHUB_REPO}/contents/${MANIFEST_PATH}`, {
-        method: 'PUT',
-        headers: {
-            'Authorization': `Bearer ${GITHUB_TOKEN}`,
-            'Accept': 'application/vnd.github+json',
-            'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(body)
-    });
+    const res = await axios.put(
+        `${GITHUB_API}/repos/${GITHUB_REPO}/contents/${MANIFEST_PATH}`,
+        body,
+        { headers: { ...githubHeaders, 'Content-Type': 'application/json' } }
+    );
 
-    if (!res.ok) {
-        const err = await res.json();
-        throw new Error(`GitHub push hatası: ${err.message}`);
-    }
-
-    return await res.json();
+    return res.data;
 }
 
-// GET /manifest — manifest'i çek (herkese açık)
+// GET /manifest
 router.get('/', async (req, res) => {
     try {
         const { content } = await getManifest();
         res.json(content);
     } catch (err) {
+        console.error('GET /manifest hata:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
 
-// POST /manifest/push — manifest güncelle (sadece admin token ile)
+// POST /manifest/push
 router.post('/push', async (req, res) => {
     const token = req.headers['authorization']?.split(' ')[1];
     if (!token) return res.status(401).json({ error: 'Token gerekli.' });
 
-    const jwt = require('jsonwebtoken');
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         if (!decoded.isAdmin) return res.status(403).json({ error: 'Yetkisiz.' });
@@ -73,15 +69,12 @@ router.post('/push', async (req, res) => {
     }
 
     const { instance, files } = req.body;
-    // instance: "AGLR"
-    // files: [{ path: "config/ftbquests/...", hash: "abc123", url: "https://raw...", size: 1234 }]
-
-    if (!instance || !files) 
+    if (!instance || !files)
         return res.status(400).json({ error: 'instance ve files gerekli.' });
 
     try {
         const { content, sha } = await getManifest();
-
+        content.instances = content.instances || {};
         content.instances[instance] = {
             updatedAt: new Date().toISOString(),
             files
@@ -90,6 +83,7 @@ router.post('/push', async (req, res) => {
         await pushManifest(content, sha);
         res.json({ success: true, fileCount: files.length });
     } catch (err) {
+        console.error('POST /manifest/push hata:', err.message);
         res.status(500).json({ error: err.message });
     }
 });
