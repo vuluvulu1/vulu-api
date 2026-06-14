@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // 518 dosya için yeterli
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URL)
