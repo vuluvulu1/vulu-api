@@ -11,7 +11,7 @@ const QUESTION = 'Bu sürüme erişmek için çok önemli olan bir yıl dönüm�
 const ANSWER = '29217'; // mevcut cevabın aynısı — istersen değiştir
 
 async function seed() {
-    await mongoose.connect(process.env.MONGO_URI);
+    await mongoose.connect(process.env.MONGO_URL);
 
     const answerHash = await bcrypt.hash(ANSWER, 10);
 
