@@ -1,9 +1,11 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
+const cors = require('cors');
 
 const app = express();
-app.use(express.json({ limit: '10mb' })); // 518 dosya için yeterli
+app.use(cors());
+app.use(express.json());
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URL)
@@ -12,12 +14,9 @@ mongoose.connect(process.env.MONGO_URL)
 
 // Route'lar
 app.use('/auth', require('./routes/auth'));
-app.use('/manifest', require('./routes/manifest'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Sunucu ${PORT} portunda çalışıyor.`);
-});
+app.listen(PORT, () => console.log(`API çalışıyor: http://localhost:${PORT}`));
