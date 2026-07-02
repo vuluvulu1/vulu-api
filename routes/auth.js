@@ -1,4 +1,5 @@
 const express = require('express');
+const SecurityQuestion = require('../models/SecurityQuestion');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
@@ -32,7 +33,24 @@ router.post('/login', async (req, res) => {
         { expiresIn: '7d' }
     );
 
-    res.json({ token, allowedPacks: user.allowedPacks });
+    res.json({ token, allowedPacks: user.allowedPacks, isAdmin: user.isAdmin });
+});
+
+// POST /auth/verify-answer
+router.post('/verify-answer', async (req, res) => {
+    try {
+        const { key, answer } = req.body;
+        if (!key || !answer)
+            return res.status(400).json({ error: 'key ve answer gerekli.' });
+
+        const sq = await SecurityQuestion.findOne({ key });
+        if (!sq) return res.status(404).json({ error: 'Soru bulunamadı.' });
+
+        const valid = await bcrypt.compare(answer.trim(), sq.answerHash);
+        res.json({ valid }); // sadece true/false
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası.' });
+    }
 });
 
 // POST /auth/create-user  (sadece sen kullanacaksın, admin işlemi)
@@ -49,6 +67,17 @@ router.post('/create-user', async (req, res) => {
     await user.save();
 
     res.json({ success: true, username });
+});
+
+// GET /auth/security-question/:key
+router.get('/security-question/:key', async (req, res) => {
+    try {
+        const sq = await SecurityQuestion.findOne({ key: req.params.key });
+        if (!sq) return res.status(404).json({ error: 'Soru bulunamadı.' });
+        res.json({ question: sq.question }); // sadece soruyu döner, cevabı asla
+    } catch (err) {
+        res.status(500).json({ error: 'Sunucu hatası.' });
+    }
 });
 
 // GET /auth/version
