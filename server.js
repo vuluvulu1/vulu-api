@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 
 // MongoDB bağlantısı
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URL)
     .then(() => console.log('MongoDB bağlandı.'))
     .catch(err => console.error('MongoDB bağlantı hatası:', err));
 
