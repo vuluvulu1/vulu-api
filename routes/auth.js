@@ -26,13 +26,21 @@ router.post('/login', async (req, res) => {
     if (!valid)
         return res.status(401).json({ error: 'Şifre yanlış.' });
 
-    const token = jwt.sign(
-        { username: user.username, allowedPacks: user.allowedPacks },
+        const token = jwt.sign(
+        {
+            username: user.username,
+            allowedPacks: user.allowedPacks,
+            isAdmin: user.isAdmin
+        },
         process.env.JWT_SECRET,
         { expiresIn: '7d' }
     );
 
-    res.json({ token, allowedPacks: user.allowedPacks });
+    res.json({
+        token,
+        allowedPacks: user.allowedPacks,
+        isAdmin: user.isAdmin
+    });
 });
 
 // POST /auth/create-user  (sadece sen kullanacaksın, admin işlemi)
