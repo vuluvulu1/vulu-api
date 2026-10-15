@@ -23,6 +23,15 @@ function publicProfile(user, packCount = 0) {
     };
 }
 
+/**
+ * Yalnızca verilen alanları yazar. save() belgenin tamamını şemaya göre doğruladığı için eski
+ * (launcher'ın admin panelinden oluşturulmuş) kayıtlarda reddedilebilir; $set buna takılmaz.
+ */
+async function setFields(user, fields) {
+    await User.updateOne({ _id: user._id }, { $set: fields });
+    user.set(fields);
+}
+
 async function packCounts() {
     const rows = await Pack.aggregate([{ $group: { _id: '$author', count: { $sum: 1 } } }]);
     return Object.fromEntries(rows.map(r => [r._id, r.count]));
@@ -48,8 +57,7 @@ router.put('/me', requireAuth, async (req, res) => {
     const bio = String(req.body.bio ?? '').trim();
     if (bio.length > MAX_BIO) return res.status(400).json({ error: `Açıklama en fazla ${MAX_BIO} karakter olabilir.` });
 
-    req.user.bio = bio;
-    await req.user.save();
+    await setFields(req.user, { bio });
     res.json(publicProfile(req.user));
 });
 
@@ -64,16 +72,14 @@ router.put('/me/avatar', requireAuth, express.raw({ type: AVATAR_TYPES, limit: '
         { data: req.body, contentType, updatedAt: new Date() },
         { upsert: true });
 
-    req.user.avatarVersion = Date.now();
-    await req.user.save();
+    await setFields(req.user, { avatarVersion: Date.now() });
     res.json(publicProfile(req.user));
 });
 
 // DELETE /users/me/avatar
 router.delete('/me/avatar', requireAuth, async (req, res) => {
     await Avatar.deleteOne({ username: req.user.username });
-    req.user.avatarVersion = 0;
-    await req.user.save();
+    await setFields(req.user, { avatarVersion: 0 });
     res.json(publicProfile(req.user));
 });
 
@@ -88,8 +94,7 @@ router.post('/me/password', requireAuth, async (req, res) => {
     const valid = await bcrypt.compare(String(currentPassword), req.user.passwordHash);
     if (!valid) return res.status(400).json({ error: 'Mevcut şifre yanlış.' });
 
-    req.user.passwordHash = await bcrypt.hash(String(newPassword), 10);
-    await req.user.save();
+    await setFields(req.user, { passwordHash: await bcrypt.hash(String(newPassword), 10) });
     res.json({ success: true });
 });
 

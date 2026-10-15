@@ -26,9 +26,10 @@ router.post('/login', async (req, res) => {
     if (!valid)
         return res.status(401).json({ error: 'Şifre yanlış.' });
 
-    // Topluluk listesinde "son görülme" için
-    user.lastSeenAt = new Date();
-    await user.save();
+    // Topluluk listesinde "son görülme" için. Yalnızca bu alan yazılır (eski kayıtlar şemaya tam uymasa da
+    // sorun çıkmaz) ve beklenmez: kaydedilemese bile giriş engellenmez.
+    User.updateOne({ _id: user._id }, { $set: { lastSeenAt: new Date() } })
+        .catch(err => console.error('lastSeenAt yazılamadı:', err.message));
 
         const token = jwt.sign(
         {
