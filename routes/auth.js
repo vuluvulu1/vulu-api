@@ -26,6 +26,10 @@ router.post('/login', async (req, res) => {
     if (!valid)
         return res.status(401).json({ error: 'Şifre yanlış.' });
 
+    // Topluluk listesinde "son görülme" için
+    user.lastSeenAt = new Date();
+    await user.save();
+
         const token = jwt.sign(
         {
             username: user.username,
