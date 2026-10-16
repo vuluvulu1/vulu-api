@@ -7,7 +7,9 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 
 const BUCKET = 'packfiles';
-const LIMITS = { overrides: 200 * 1024 * 1024, cover: 8 * 1024 * 1024 };
+const LIMITS = { overrides: 200 * 1024 * 1024, cover: 8 * 1024 * 1024, logo: 4 * 1024 * 1024 };
+const LIMIT_ERRORS = { overrides: 'Paket dosyaları 200 MB\'ı aşıyor.', cover: 'Kapak 8 MB\'tan büyük olamaz.', logo: 'Logo 4 MB\'tan büyük olamaz.' };
+const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const COVER_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 const LOADERS = ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'];
 
@@ -32,6 +34,8 @@ function toClient(pack) {
         overridesSize: pack.overridesSize || 0,
         hasCover: !!pack.coverFileId,
         coverExt: pack.coverExt || null,
+        hasLogo: !!pack.logoFileId,
+        logoExt: pack.logoExt || null,
     };
 }
 
@@ -79,12 +83,18 @@ router.get('/:id/overrides', requireAuth, async (req, res) => {
 router.get('/:id/cover', async (req, res) => {
     const pack = await findPack(req.params.id);
     if (!pack || !pack.coverFileId) return res.status(404).end();
-    const type = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' }[pack.coverExt] || 'image/png';
-    streamFile(res, pack.coverFileId, type, true);
+    streamFile(res, pack.coverFileId, IMAGE_TYPES[pack.coverExt] || 'image/png', true);
+});
+
+// GET /packs/:id/logo?v=<revision>
+router.get('/:id/logo', async (req, res) => {
+    const pack = await findPack(req.params.id);
+    if (!pack || !pack.logoFileId) return res.status(404).end();
+    streamFile(res, pack.logoFileId, IMAGE_TYPES[pack.logoExt] || 'image/png', true);
 });
 
 /**
- * POST /packs/files?kind=overrides|cover  (admin)
+ * POST /packs/files?kind=overrides|cover|logo  (admin)
  * Gövde dosyanın kendisidir; belleğe alınmadan doğrudan GridFS'e akıtılır.
  * Dönen fileId, POST /packs ile paket yayınlanırken kullanılır.
  */
@@ -94,7 +104,7 @@ router.post('/files', requireAuth, requireAdmin, (req, res) => {
 
     const limit = LIMITS[kind];
     if (Number(req.headers['content-length'] || 0) > limit)
-        return res.status(413).json({ error: kind === 'cover' ? 'Kapak 8 MB\'tan büyük olamaz.' : 'Paket dosyaları 200 MB\'ı aşıyor.' });
+        return res.status(413).json({ error: LIMIT_ERRORS[kind] });
 
     const upload = bucket().openUploadStream(`${kind}-${Date.now()}`, {
         metadata: { kind, uploadedBy: req.user.username },
@@ -159,6 +169,14 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         if (!cover || !COVER_EXTS.includes(body.coverExt)) return res.status(400).json({ error: 'Kapak resmi geçersiz.' });
     }
 
+    // Logo: yeni dosya verilirse değişir, clearLogo ile kaldırılır, ikisi de yoksa eskisi kalır
+    let logo = null;
+    if (body.logoFileId) {
+        logo = await ownedUpload(body.logoFileId, 'logo', req.user.username);
+        if (!logo || !COVER_EXTS.includes(body.logoExt)) return res.status(400).json({ error: 'Logo resmi geçersiz.' });
+    }
+    const clearLogo = !logo && body.clearLogo === true;
+
     const fields = {
         name, description,
         author: req.user.username,
@@ -173,6 +191,8 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         updatedAt: new Date(),
     };
     if (cover) { fields.coverFileId = cover._id; fields.coverExt = body.coverExt; }
+    if (logo) { fields.logoFileId = logo._id; fields.logoExt = body.logoExt; }
+    if (clearLogo) { fields.logoFileId = null; fields.logoExt = null; }
 
     if (body.id) {
         const pack = await findPack(body.id);
@@ -180,11 +200,13 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
 
         const oldOverrides = pack.overridesFileId;
         const oldCover = cover ? pack.coverFileId : null;
+        const oldLogo = logo || clearLogo ? pack.logoFileId : null;
         Object.assign(pack, fields, { revision: pack.revision + 1 });
         await pack.save();
 
         await deleteFile(oldOverrides);
         await deleteFile(oldCover);
+        await deleteFile(oldLogo);
         return res.json(toClient(pack));
     }
 
@@ -200,6 +222,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     await Feedback.deleteMany({ pack: pack._id });
     await deleteFile(pack.overridesFileId);
     await deleteFile(pack.coverFileId);
+    await deleteFile(pack.logoFileId);
     res.json({ success: true });
 });
 
