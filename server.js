@@ -30,7 +30,12 @@ app.use(limitByIp({ windowMs: 60 * 1000, max: 240, message: 'Çok fazla istek. B
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB bağlandı.'))
+    .then(async () => {
+        console.log('MongoDB bağlandı.');
+        // Eski sürümlerden kalan paket izinleri (allowedPacks) temizlenir; eşleşen kayıt kalmayınca iş yapmaz
+        try { await mongoose.connection.db.collection('users').updateMany({ allowedPacks: { $exists: true } }, { $unset: { allowedPacks: '' } }); }
+        catch (err) { console.error('Eski alanlar temizlenemedi:', err.message); }
+    })
     .catch(err => console.error('MongoDB bağlantı hatası:', err));
 
 // Route'lar
