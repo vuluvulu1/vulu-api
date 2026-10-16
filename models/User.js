@@ -11,6 +11,8 @@ const userSchema = new mongoose.Schema({
     // Profil
     bio: { type: String, default: '', maxlength: 300 },
     avatarVersion: { type: Number, default: 0 }, // 0 = avatar yok; değişince launcher önbelleği yenilenir
+    skinHash: { type: String, default: '' },      // boş = varsayılan skin (Steve/Alex)
+    skinModel: { type: String, enum: ['default', 'slim'], default: 'default' },
     lastSeenAt: { type: Date },
     createdAt: { type: Date, default: Date.now },
 });

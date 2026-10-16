@@ -3,6 +3,11 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Avatar = require('../models/Avatar');
 const Pack = require('../models/Pack');
+const crypto = require('crypto');
+const Skin = require('../models/Skin');
+const GameSession = require('../models/GameSession');
+const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
+const { tokenHash } = require('./yggdrasil');
 const { requireAuth, signToken } = require('../middleware/auth');
 
 const router = express.Router();
@@ -17,6 +22,8 @@ function publicProfile(user, packCount = 0) {
         bio: user.bio || '',
         isAdmin: !!user.isAdmin,
         avatarVersion: user.avatarVersion || 0,
+        skinHash: user.skinHash || '',
+        skinModel: user.skinModel === 'slim' ? 'slim' : 'default',
         createdAt: user.createdAt || null,
         lastSeenAt: user.lastSeenAt || null,
         packCount,
@@ -83,6 +90,61 @@ router.delete('/me/avatar', requireAuth, async (req, res) => {
     res.json(publicProfile(req.user));
 });
 
+// ── Skin ──────────────────────────────────────────────────────────────
+const SKIN_MAX_BYTES = 64 * 1024;
+
+/** Minecraft skin'i mi: PNG ve 64×64 (ya da eski biçim 64×32). */
+function skinSize(buffer) {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (buffer.length < 24 || !buffer.subarray(0, 8).equals(png) || buffer.toString('ascii', 12, 16) !== 'IHDR') return null;
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+}
+
+/** Artık hiçbir kullanıcının kullanmadığı skin resmi silinir. */
+async function dropUnusedSkin(hash) {
+    if (hash && !(await User.exists({ skinHash: hash }))) await Skin.deleteOne({ hash });
+}
+
+// PUT /users/me/skin?model=default|slim — gövde PNG'nin kendisi
+router.put('/me/skin', requireAuth, express.raw({ type: 'image/png', limit: SKIN_MAX_BYTES }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || req.body.length === 0)
+        return res.status(400).json({ error: 'Skin PNG olmalı (en fazla 64 KB).' });
+    const size = skinSize(req.body);
+    if (!size || size.width !== 64 || (size.height !== 64 && size.height !== 32))
+        return res.status(400).json({ error: 'Skin 64×64 (ya da eski biçim 64×32) piksel bir PNG olmalı.' });
+
+    const hash = crypto.createHash('sha256').update(req.body).digest('hex');
+    await Skin.updateOne({ hash }, { $setOnInsert: { hash, data: req.body } }, { upsert: true });
+
+    const previous = req.user.skinHash;
+    await setFields(req.user, { skinHash: hash, skinModel: req.query.model === 'slim' ? 'slim' : 'default' });
+    if (previous && previous !== hash) await dropUnusedSkin(previous);
+    res.json(publicProfile(req.user));
+});
+
+// PUT /users/me/skin/model { model } — yalnızca beden tipi (Klasik / İnce)
+router.put('/me/skin/model', requireAuth, async (req, res) => {
+    const model = req.body.model === 'slim' ? 'slim' : 'default';
+    await setFields(req.user, { skinModel: model });
+    res.json(publicProfile(req.user));
+});
+
+// DELETE /users/me/skin — varsayılan skine dönülür
+router.delete('/me/skin', requireAuth, async (req, res) => {
+    const previous = req.user.skinHash;
+    await setFields(req.user, { skinHash: '', skinModel: 'default' });
+    await dropUnusedSkin(previous);
+    res.json(publicProfile(req.user));
+});
+
+// POST /users/me/game-session — launcher oyunu başlatırken alır; oyun LAN'a/sunucuya katılırken bununla doğrulanır
+router.post('/me/game-session', requireAuth, async (req, res) => {
+    const accessToken = crypto.randomBytes(32).toString('hex');
+    const profileId = offlineUuid(req.user.username);
+    await GameSession.create({ tokenHash: tokenHash(accessToken), username: req.user.username, profileId });
+    res.json({ accessToken, profileId, name: req.user.username, apiRoot: `${baseUrlOf(req)}/yggdrasil` });
+});
+
 // POST /users/me/password
 router.post('/me/password', requireAuth, async (req, res) => {
     const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
@@ -100,6 +162,7 @@ router.post('/me/password', requireAuth, async (req, res) => {
         passwordHash: await bcrypt.hash(String(newPassword), 10),
         tokenVersion: (req.user.tokenVersion || 0) + 1,
     });
+    await GameSession.deleteMany({ username: req.user.username });
     res.json({ success: true, token: signToken(req.user) });
 });
 
