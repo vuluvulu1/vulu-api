@@ -52,6 +52,8 @@ router.get('/textures/:hash', async (req, res) => {
     if (!skin) return res.status(404).end();
     res.set('Content-Type', 'image/png');
     res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    // Launcher skin önizlemesini canvas'a çizer (crossOrigin); resim zaten herkese açık
+    res.set('Access-Control-Allow-Origin', '*');
     res.send(skin.data.buffer ? Buffer.from(skin.data.buffer) : skin.data);
 });
 
