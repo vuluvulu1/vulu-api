@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema({
     email: { type: String, default: '' }, // kayıt ekranından gelenlerde dolu; eski hesaplarda boş
     isActive: { type: Boolean, default: true },
     isAdmin: { type: Boolean, default: false },
+    tokenVersion: { type: Number, default: 0 }, // şifre değişince artar; eski oturumlar kapanır
 
     // Profil
     bio: { type: String, default: '', maxlength: 300 },
