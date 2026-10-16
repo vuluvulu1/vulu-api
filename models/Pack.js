@@ -34,6 +34,9 @@ const packSchema = new mongoose.Schema({
     overridesSize: { type: Number, default: 0 },
     coverFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
     coverExt: { type: String, default: null },
+    // Ana ekranda paket adının yerine gösterilen logo (isteğe bağlı)
+    logoFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    logoExt: { type: String, default: null },
 });
 
 module.exports = mongoose.model('Pack', packSchema, 'packs');
