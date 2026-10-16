@@ -6,9 +6,10 @@ const Pack = require('../models/Pack');
 const crypto = require('crypto');
 const Skin = require('../models/Skin');
 const GameSession = require('../models/GameSession');
+const PanelToken = require('../models/PanelToken');
 const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
-const { requireAuth, signToken } = require('../middleware/auth');
+const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -145,6 +146,25 @@ router.post('/me/game-session', requireAuth, async (req, res) => {
     res.json({ accessToken, profileId, name: req.user.username, apiRoot: `${baseUrlOf(req)}/yggdrasil` });
 });
 
+// POST /users/me/panel-token { label } — vulu Server Panel'i hesaba bağlar (yalnızca paketleri okuyabilir).
+// Launcher oturumuyla alınır; panel token'ıyla yeni token alınamaz.
+const MAX_PANEL_TOKENS = 10;
+router.post('/me/panel-token', requireAuth, async (req, res) => {
+    const label = typeof req.body?.label === 'string' ? req.body.label.trim().slice(0, 60) : '';
+    const token = PANEL_PREFIX + crypto.randomBytes(32).toString('hex');
+    await PanelToken.create({ tokenHash: panelTokenHash(token), username: req.user.username, tokenVersion: req.user.tokenVersion || 0, label });
+    // Hesap başına en fazla 10 bağlı panel: en eskiler düşer
+    const extra = await PanelToken.find({ username: req.user.username }).sort({ createdAt: -1 }).skip(MAX_PANEL_TOKENS).select('_id').lean();
+    if (extra.length) await PanelToken.deleteMany({ _id: { $in: extra.map(t => t._id) } });
+    res.json({ token, username: req.user.username });
+});
+
+// DELETE /users/me/panel-token — panel bağlantıyı kaldırırken kendi token'ını siler
+router.delete('/me/panel-token', requirePackReader, async (req, res) => {
+    if (req.panelToken) await PanelToken.deleteOne({ _id: req.panelToken._id });
+    res.json({ success: true });
+});
+
 // POST /users/me/password
 router.post('/me/password', requireAuth, async (req, res) => {
     const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
@@ -163,6 +183,7 @@ router.post('/me/password', requireAuth, async (req, res) => {
         tokenVersion: (req.user.tokenVersion || 0) + 1,
     });
     await GameSession.deleteMany({ username: req.user.username });
+    await PanelToken.deleteMany({ username: req.user.username });
     res.json({ success: true, token: signToken(req.user) });
 });
 
