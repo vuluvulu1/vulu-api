@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
+    email: { type: String, default: '' }, // kayıt ekranından gelenlerde dolu; eski hesaplarda boş
     isActive: { type: Boolean, default: true },
     isAdmin: { type: Boolean, default: false },
 
