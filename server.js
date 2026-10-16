@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
+// Render bir vekil sunucunun arkasında; kayıt sınırı için gerçek istemci IP'si req.ip'e gelsin
+app.set('trust proxy', 1);
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URI)
@@ -15,6 +17,7 @@ app.use('/auth', require('./routes/auth'));
 app.use('/users', require('./routes/users'));
 app.use('/packs', require('./routes/packs'));
 app.use('/feedback', require('./routes/feedback'));
+app.use('/admin', require('./routes/admin'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));
