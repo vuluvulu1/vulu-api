@@ -4,48 +4,63 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Registration = require('../models/Registration');
 const Version = require('../models/Version');
+const { createCounter } = require('../middleware/rateLimit');
+const { signToken } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Şifre deneme sınırları: IP başına toplam deneme ve kullanıcı adı başına başarısız deneme (15 dk)
+const LOGIN_WINDOW = 15 * 60 * 1000;
+const loginsByIp = createCounter({ windowMs: LOGIN_WINDOW, max: 30 });
+const failuresByName = createCounter({ windowMs: LOGIN_WINDOW, max: 8 });
+const TOO_MANY = 'Çok fazla başarısız deneme. 15 dakika sonra tekrar dene.';
+const WRONG = 'Kullanıcı adı veya şifre hatalı.';
+
+// Kullanıcı yokken de aynı süre harcansın diye karşılaştırılan sahte hash (yanıt süresinden ad tahmin edilmesin)
+const DUMMY_HASH = bcrypt.hashSync('vulu-dummy-password', 10);
+
 // POST /auth/login
 router.post('/login', async (req, res) => {
-    const { username, password } = req.body;
+    // Gövdeden gelen değerler yalnızca metin olarak kullanılır: {"$ne": null} gibi sorgu operatörleri geçemez
+    const username = typeof req.body.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
 
-    if (!username || !password)
+    if (!username || !password || username.length > 32 || password.length > 200)
         return res.status(400).json({ error: 'Kullanıcı adı ve şifre gerekli.' });
+
+    const nameKey = username.toLowerCase();
+    if (loginsByIp.hit(req.ip || 'unknown') || failuresByName.blocked(nameKey))
+        return res.status(429).json({ error: TOO_MANY });
 
     const user = await User.findOne({ username });
 
     if (!user) {
-        if (await Registration.exists({ username }))
+        // Bekleyen kayıt durumu yalnızca şifre de doğruysa söylenir; aksi halde hangi adların beklediği öğrenilemez
+        const pending = await Registration.findOne({ username }).select('passwordHash').lean();
+        const pendingMatch = await bcrypt.compare(password, pending ? pending.passwordHash : DUMMY_HASH);
+        if (pending && pendingMatch)
             return res.status(403).json({ error: 'Kaydın henüz onaylanmadı. Bir admin onayladığında giriş yapabilirsin.' });
-        return res.status(401).json({ error: 'Kullanıcı bulunamadı.' });
+        failuresByName.hit(nameKey);
+        return res.status(401).json({ error: WRONG });
     }
 
+    if (!(await bcrypt.compare(password, user.passwordHash))) {
+        failuresByName.hit(nameKey);
+        return res.status(401).json({ error: WRONG });
+    }
+    failuresByName.reset(nameKey);
+
+    // Kapalı hesap ancak doğru şifreyle söylenir
     if (!user.isActive)
         return res.status(403).json({ error: 'Hesabınız devre dışı.' });
-
-    const valid = await bcrypt.compare(password, user.passwordHash);
-
-    if (!valid)
-        return res.status(401).json({ error: 'Şifre yanlış.' });
 
     // Topluluk listesinde "son görülme" için. Yalnızca bu alan yazılır (eski kayıtlar şemaya tam uymasa da
     // sorun çıkmaz) ve beklenmez: kaydedilemese bile giriş engellenmez.
     User.updateOne({ _id: user._id }, { $set: { lastSeenAt: new Date() } })
         .catch(err => console.error('lastSeenAt yazılamadı:', err.message));
 
-        const token = jwt.sign(
-        {
-            username: user.username,
-            isAdmin: user.isAdmin
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: '7d' }
-    );
-
     res.json({
-        token,
+        token: signToken(user),
         isAdmin: user.isAdmin
     });
 });
@@ -68,8 +83,9 @@ router.post('/register', async (req, res) => {
         return res.status(400).json({ error: 'Kullanıcı adı 3-16 karakter olmalı; yalnızca İngilizce harf, rakam ve _ kullanılabilir.' });
     if (email.length > 254 || !EMAIL.test(email))
         return res.status(400).json({ error: 'Geçerli bir e-posta adresi gir.' });
-    if (password.length < 6 || password.length > 100)
-        return res.status(400).json({ error: 'Şifre en az 6 karakter olmalı.' });
+    // bcrypt ilk 72 baytı kullanır; daha uzunu sessizce kısalmasın diye sınır konur
+    if (password.length < 6 || Buffer.byteLength(password) > 72)
+        return res.status(400).json({ error: 'Şifre 6-72 karakter olmalı.' });
 
     if (await User.exists({ username: sameName(username) }))
         return res.status(409).json({ error: 'Bu kullanıcı adı alınmış.' });

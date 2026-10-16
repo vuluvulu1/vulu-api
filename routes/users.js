@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Avatar = require('../models/Avatar');
 const Pack = require('../models/Pack');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, signToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -85,7 +85,8 @@ router.delete('/me/avatar', requireAuth, async (req, res) => {
 
 // POST /users/me/password
 router.post('/me/password', requireAuth, async (req, res) => {
-    const { currentPassword, newPassword } = req.body;
+    const currentPassword = typeof req.body.currentPassword === 'string' ? req.body.currentPassword : '';
+    const newPassword = typeof req.body.newPassword === 'string' ? req.body.newPassword : '';
     if (!currentPassword || !newPassword)
         return res.status(400).json({ error: 'Mevcut ve yeni şifre gerekli.' });
     if (String(newPassword).length < 6 || String(newPassword).length > 72)
@@ -94,8 +95,12 @@ router.post('/me/password', requireAuth, async (req, res) => {
     const valid = await bcrypt.compare(String(currentPassword), req.user.passwordHash);
     if (!valid) return res.status(400).json({ error: 'Mevcut şifre yanlış.' });
 
-    await setFields(req.user, { passwordHash: await bcrypt.hash(String(newPassword), 10) });
-    res.json({ success: true });
+    // Bu hesabın diğer bütün oturumları kapanır; değiştiren kişiye yeni token verilir
+    await setFields(req.user, {
+        passwordHash: await bcrypt.hash(String(newPassword), 10),
+        tokenVersion: (req.user.tokenVersion || 0) + 1,
+    });
+    res.json({ success: true, token: signToken(req.user) });
 });
 
 // GET /users/:username — profil ve paylaştığı paketler

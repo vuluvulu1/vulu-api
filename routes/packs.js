@@ -12,6 +12,7 @@ const LIMIT_ERRORS = { overrides: 'Paket dosyaları 200 MB\'ı aşıyor.', cover
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const COVER_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 const LOADERS = ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'];
+const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
 
 const bucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: BUCKET });
 const fileCollection = () => mongoose.connection.db.collection(`${BUCKET}.files`);
@@ -156,6 +157,9 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     if (name.length < 1 || name.length > 40) return res.status(400).json({ error: 'Paket adı 1-40 karakter olmalı.' });
     if (description.length > 600) return res.status(400).json({ error: 'Açıklama en fazla 600 karakter olabilir.' });
     if (!body.mcVersion || !LOADERS.includes(body.loader)) return res.status(400).json({ error: 'Sürüm bilgisi eksik.' });
+    // Sürümler kurulan dosya ve klasör adlarına dönüşür; yalnızca sürüm karakterlerine izin verilir
+    if (!VERSION.test(String(body.mcVersion)) || (body.loader !== 'vanilla' && !VERSION.test(String(body.loaderVersion || ''))))
+        return res.status(400).json({ error: 'Sürüm bilgisi geçersiz.' });
     if (!Array.isArray(body.mods) || body.mods.length > 2000) return res.status(400).json({ error: 'Mod listesi geçersiz.' });
     if (body.mods.some(m => !m || typeof m.url !== 'string' || !m.url.startsWith('https://cdn.modrinth.com/')))
         return res.status(400).json({ error: 'Modlar yalnızca Modrinth adreslerinden indirilebilir.' });

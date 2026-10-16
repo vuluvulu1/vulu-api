@@ -2,10 +2,31 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 
+const { limitByIp } = require('./middleware/rateLimit');
+
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)
+    console.warn('UYARI: JWT_SECRET en az 32 karakterlik rastgele bir değer olmalı.');
+
 const app = express();
+app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
 // Render bir vekil sunucunun arkasında; kayıt sınırı için gerçek istemci IP'si req.ip'e gelsin
 app.set('trust proxy', 1);
+
+// Tarayıcıya yönelik temel güvenlik başlıkları (API yalnızca JSON ve resim döndürür)
+app.use((req, res, next) => {
+    res.set({
+        'X-Content-Type-Options': 'nosniff',
+        'X-Frame-Options': 'DENY',
+        'Referrer-Policy': 'no-referrer',
+        'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+        'Strict-Transport-Security': 'max-age=31536000',
+    });
+    next();
+});
+
+// Genel sınır: tek bir IP'nin sunucuyu boğmasına karşı (launcher normal kullanımda bunun çok altında kalır)
+app.use(limitByIp({ windowMs: 60 * 1000, max: 240, message: 'Çok fazla istek. Biraz bekleyip tekrar dene.' }));
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URI)
