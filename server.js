@@ -44,6 +44,7 @@ app.use('/users', require('./routes/users'));
 app.use('/packs', require('./routes/packs'));
 app.use('/feedback', require('./routes/feedback'));
 app.use('/admin', require('./routes/admin'));
+app.use('/yggdrasil', require('./routes/yggdrasil').router);
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));

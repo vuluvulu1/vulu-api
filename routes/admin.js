@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const User = require('../models/User');
 const Avatar = require('../models/Avatar');
 const Registration = require('../models/Registration');
+const Skin = require('../models/Skin');
+const GameSession = require('../models/GameSession');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -91,6 +93,7 @@ router.patch('/users/:id', async (req, res) => {
     const update = { $set: set };
     if (set.passwordHash) update.$inc = { tokenVersion: 1 };
     const updated = await User.findByIdAndUpdate(user._id, update, { returnDocument: 'after' }).lean();
+    if (set.passwordHash || set.isActive === false) await GameSession.deleteMany({ username: user.username });
     res.json(userToClient(updated));
 });
 
@@ -105,6 +108,8 @@ router.delete('/users/:id', async (req, res) => {
 
     await User.deleteOne({ _id: user._id });
     await Avatar.deleteOne({ username: user.username });
+    await GameSession.deleteMany({ username: user.username });
+    if (user.skinHash && !(await User.exists({ skinHash: user.skinHash }))) await Skin.deleteOne({ hash: user.skinHash });
     res.json({ success: true });
 });
 
