@@ -1,0 +1,35 @@
+Copyright (c) 2026 vuluvulu1. All rights reserved.
+
+This repository is published only to deploy the backend of the vulu Launcher. No license
+is granted.
+
+The source code and all other files in this repository ("the Software"), except the
+third-party components listed below, are the exclusive property of the copyright holder.
+Without prior written permission from the copyright holder, you may not:
+
+  - use, run, host, copy or reproduce the Software or any part of it;
+  - modify, adapt, translate or create derivative works based on the Software;
+  - distribute, publish, sublicense, sell, rent or otherwise make the Software available
+    to anyone;
+  - reuse any portion of the source code in another project.
+
+Being able to view this repository on GitHub does not grant any of these rights. Any use
+not expressly permitted above is prohibited.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. IN NO
+EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+--------------------------------------------------------------------------------
+Türkçe özet: Bu yazılımın bütün hakları saklıdır. Kaynak kodun kullanılması, çalıştırılması,
+barındırılması, kopyalanması, değiştirilmesi, dağıtılması ya da başka bir projede
+kullanılması, hak sahibinin yazılı izni olmadan yasaktır. Bu reponun GitHub'da
+görülebilmesi herhangi bir kullanım hakkı vermez.
+--------------------------------------------------------------------------------
+
+Third-party components
+----------------------
+The npm packages this project depends on (installed into node_modules, not part of this
+repository) are owned by their respective authors and remain under their own licenses:
+express, mongoose and jsonwebtoken (MIT License), bcryptjs (BSD 3-Clause License),
+dotenv (BSD 2-Clause License).
