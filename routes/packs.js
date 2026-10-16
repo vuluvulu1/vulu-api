@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const Pack = require('../models/Pack');
+const Feedback = require('../models/Feedback');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -196,6 +197,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     const pack = await findPack(req.params.id);
     if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
     await Pack.deleteOne({ _id: pack._id });
+    await Feedback.deleteMany({ pack: pack._id });
     await deleteFile(pack.overridesFileId);
     await deleteFile(pack.coverFileId);
     res.json({ success: true });
