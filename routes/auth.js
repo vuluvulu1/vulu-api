@@ -34,7 +34,6 @@ router.post('/login', async (req, res) => {
         const token = jwt.sign(
         {
             username: user.username,
-            allowedPacks: user.allowedPacks,
             isAdmin: user.isAdmin
         },
         process.env.JWT_SECRET,
@@ -43,14 +42,13 @@ router.post('/login', async (req, res) => {
 
     res.json({
         token,
-        allowedPacks: user.allowedPacks,
         isAdmin: user.isAdmin
     });
 });
 
 // POST /auth/create-user  (sadece sen kullanacaksın, admin işlemi)
 router.post('/create-user', async (req, res) => {
-    const { username, password, allowedPacks, adminKey } = req.body;
+    const { username, password, adminKey } = req.body;
 
     // Basit bir admin koruması
     if (adminKey !== process.env.JWT_SECRET)
@@ -58,7 +56,7 @@ router.post('/create-user', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const user = new User({ username, passwordHash, allowedPacks });
+    const user = new User({ username, passwordHash });
     await user.save();
 
     res.json({ success: true, username });
