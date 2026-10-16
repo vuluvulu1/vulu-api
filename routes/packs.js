@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Pack = require('../models/Pack');
 const Feedback = require('../models/Feedback');
 const { requireAuth, requireAdmin, requirePackReader } = require('../middleware/auth');
+const { squareLogo } = require('../lib/squareLogo');
 
 const router = express.Router();
 
@@ -92,6 +93,31 @@ router.get('/:id/logo', async (req, res) => {
     const pack = await findPack(req.params.id);
     if (!pack || !pack.logoFileId) return res.status(404).end();
     streamFile(res, pack.logoFileId, IMAGE_TYPES[pack.logoExt] || 'image/png', true);
+});
+
+// GET /packs/:id/logo/square?v=<revision> — logo şeffaf kare zeminin ortasında (Discord durumu için).
+// Sonuç dosya kimliğine göre bellekte tutulur; logo PNG değilse olduğu gibi döner.
+const squareCache = new Map();
+const SQUARE_CACHE_MAX = 50;
+router.get('/:id/logo/square', async (req, res) => {
+    const pack = await findPack(req.params.id);
+    if (!pack || !pack.logoFileId) return res.status(404).end();
+    const key = String(pack.logoFileId);
+    let out = squareCache.get(key);
+    if (!out) {
+        const chunks = [];
+        try {
+            await new Promise((resolve, reject) => bucket().openDownloadStream(pack.logoFileId)
+                .on('data', c => chunks.push(c)).on('error', reject).on('end', resolve));
+        } catch { return res.status(404).end(); }
+        const original = Buffer.concat(chunks);
+        out = (pack.logoExt === '.png' && squareLogo(original)) || { original, type: IMAGE_TYPES[pack.logoExt] || 'image/png' };
+        if (squareCache.size >= SQUARE_CACHE_MAX) squareCache.delete(squareCache.keys().next().value);
+        squareCache.set(key, out);
+    }
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    if (Buffer.isBuffer(out)) res.type('image/png').send(out);
+    else res.type(out.type).send(out.original);
 });
 
 /**
