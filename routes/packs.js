@@ -2,7 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Pack = require('../models/Pack');
 const Feedback = require('../models/Feedback');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requirePackReader } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -60,20 +60,20 @@ function streamFile(res, fileId, contentType, cacheable) {
 }
 
 // GET /packs
-router.get('/', requireAuth, async (req, res) => {
+router.get('/', requirePackReader, async (req, res) => {
     const packs = await Pack.find().sort({ updatedAt: -1 }).lean();
     res.json(packs.map(toClient));
 });
 
 // GET /packs/:id
-router.get('/:id', requireAuth, async (req, res) => {
+router.get('/:id', requirePackReader, async (req, res) => {
     const pack = await findPack(req.params.id);
     if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
     res.json(toClient(pack));
 });
 
 // GET /packs/:id/overrides — seçilen klasörlerin zip'i
-router.get('/:id/overrides', requireAuth, async (req, res) => {
+router.get('/:id/overrides', requirePackReader, async (req, res) => {
     const pack = await findPack(req.params.id);
     if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
     res.set('Content-Length', String(pack.overridesSize || ''));
