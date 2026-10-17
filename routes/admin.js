@@ -7,6 +7,8 @@ const Registration = require('../models/Registration');
 const Skin = require('../models/Skin');
 const GameSession = require('../models/GameSession');
 const PanelToken = require('../models/PanelToken');
+const Message = require('../models/Message');
+const MessageKey = require('../models/MessageKey');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -114,6 +116,8 @@ router.delete('/users/:id', async (req, res) => {
     await Avatar.deleteOne({ username: user.username });
     await GameSession.deleteMany({ username: user.username });
     await PanelToken.deleteMany({ username: user.username });
+    await MessageKey.deleteOne({ username: user.username });
+    await Message.deleteMany({ $or: [{ from: user.username }, { to: user.username }] });
     if (user.skinHash && !(await User.exists({ skinHash: user.skinHash }))) await Skin.deleteOne({ hash: user.skinHash });
     res.json({ success: true });
 });

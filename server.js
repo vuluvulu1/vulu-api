@@ -44,6 +44,7 @@ app.use('/users', require('./routes/users'));
 app.use('/packs', require('./routes/packs'));
 app.use('/feedback', require('./routes/feedback'));
 app.use('/servers', require('./routes/servers'));
+app.use('/messages', require('./routes/messages'));
 app.use('/admin', require('./routes/admin'));
 app.use('/yggdrasil', require('./routes/yggdrasil').router);
 
