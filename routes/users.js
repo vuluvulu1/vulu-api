@@ -54,6 +54,58 @@ router.get('/', requireAuth, async (req, res) => {
     res.json(users.map(u => publicProfile(u, counts[u.username] || 0)));
 });
 
+// ── Çevrimiçi durum (arkadaş listesi) ────────────────────────────────
+// Launcher 45 sn'de bir bildirir; bellekte tutulur (sunucu yeniden başlarsa ilk bildirimde geri gelir).
+// 2 dakika ses gelmeyen çevrimdışı sayılır. Kullanıcı ayarlardan ayrıntıları gizleyebilir ya da hiç bildirmeyebilir.
+const presence = new Map();          // username → { state, instance, mcVersion, loader, packId, server, since, at }
+const PRESENCE_TTL = 2 * 60 * 1000;
+const PRESENCE_STATES = ['launcher', 'playing', 'online'];
+const short = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '');
+
+// POST /users/me/presence { state, instance?, mcVersion?, loader?, packId?, server? }
+router.post('/me/presence', requireAuth, async (req, res) => {
+    const b = req.body || {};
+    const state = PRESENCE_STATES.includes(b.state) ? b.state : 'online';
+    const playing = state === 'playing';
+    const prev = presence.get(req.user.username);
+    const entry = {
+        state,
+        instance: playing ? short(b.instance, 60) : '',
+        mcVersion: playing ? short(b.mcVersion, 40) : '',
+        loader: playing ? short(b.loader, 20) : '',
+        packId: playing && /^[0-9a-f]{24}$/.test(b.packId || '') ? b.packId : null,
+        server: playing ? short(b.server, 120) : '',
+        at: Date.now(),
+    };
+    // "since": bu duruma ne zaman geçildiği (aynı oyunda kaldıkça değişmez)
+    entry.since = prev && prev.state === entry.state && prev.instance === entry.instance ? prev.since : Date.now();
+    presence.set(req.user.username, entry);
+    // Son görülme veritabanına en fazla 5 dakikada bir yazılır
+    if (!req.user.lastSeenAt || Date.now() - new Date(req.user.lastSeenAt).getTime() > 5 * 60 * 1000)
+        User.updateOne({ _id: req.user._id }, { $set: { lastSeenAt: new Date() } }).catch(() => {});
+    res.json({ ok: true });
+});
+
+// DELETE /users/me/presence — launcher kapanırken
+router.delete('/me/presence', requireAuth, (req, res) => {
+    presence.delete(req.user.username);
+    res.json({ ok: true });
+});
+
+// GET /users/presence — çevrimiçi olanlar
+router.get('/presence', requireAuth, (req, res) => {
+    const now = Date.now();
+    const online = [];
+    for (const [username, p] of presence) {
+        if (now - p.at > PRESENCE_TTL) { presence.delete(username); continue; }
+        online.push({
+            username, state: p.state, instance: p.instance, mcVersion: p.mcVersion, loader: p.loader,
+            packId: p.packId, server: p.server, since: new Date(p.since).toISOString(),
+        });
+    }
+    res.json(online);
+});
+
 // GET /users/me
 router.get('/me', requireAuth, async (req, res) => {
     const counts = await packCounts();
