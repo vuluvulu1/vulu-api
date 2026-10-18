@@ -16,6 +16,54 @@ router.use(requireAuth, requireAdmin);
 
 const toClient = r => ({ id: String(r._id), username: r.username, email: r.email, createdAt: r.createdAt });
 
+// ── Veritabanı alanı ──────────────────────────────────────────────────
+// Atlas'ın ücretsiz kümesi 512 MB; başka bir plan kullanılıyorsa DB_LIMIT_MB ile değiştirilir
+const DB_LIMIT_MB = () => Number(process.env.DB_LIMIT_MB) || 512;
+
+/** Bir koleksiyondaki belgelerin bayt toplamı ($bsonSize) ve sayısı; koleksiyon yoksa sıfır. */
+async function collectionUsage(db, name, match = {}) {
+    try {
+        const [row] = await db.collection(name).aggregate([
+            { $match: match },
+            { $group: { _id: null, bytes: { $sum: { $bsonSize: '$$ROOT' } }, count: { $sum: 1 } } },
+        ]).toArray();
+        return { bytes: row?.bytes || 0, count: row?.count || 0 };
+    } catch { return { bytes: 0, count: 0 }; }
+}
+
+// GET /admin/storage — veritabanının ne kadarı dolu, neye harcanıyor
+router.get('/storage', async (req, res) => {
+    const db = mongoose.connection.db;
+    const sum = async (...names) => {
+        const parts = await Promise.all(names.map(n => collectionUsage(db, n)));
+        return { bytes: parts.reduce((a, p) => a + p.bytes, 0), count: parts[0].count };
+    };
+    // GridFS dosyalarının boyutu dosya kayıtlarında yazılı; parçaları taramaya gerek yok
+    const gridfs = async bucket => {
+        try {
+            const [row] = await db.collection(`${bucket}.files`).aggregate([{ $group: { _id: null, bytes: { $sum: '$length' }, count: { $sum: 1 } } }]).toArray();
+            return { bytes: row?.bytes || 0, count: row?.count || 0 };
+        } catch { return { bytes: 0, count: 0 }; }
+    };
+    const [packFiles, shotFiles, avatars, banners, skins, messages, total] = await Promise.all([
+        gridfs('packfiles'),
+        gridfs('shotfiles'),
+        sum('avatars'), sum('banners'), sum('skins'), sum('messages', 'messagekeys'),
+        db.stats().catch(() => null),
+    ]);
+    const used = total ? (total.dataSize || 0) + (total.indexSize || 0) : null;
+    res.json({
+        limitBytes: DB_LIMIT_MB() * 1024 * 1024,
+        usedBytes: used,
+        parts: [
+            { key: 'packs', label: 'Paket dosyaları', bytes: packFiles.bytes },
+            { key: 'shots', label: 'Ekran görüntüleri', bytes: shotFiles.bytes },
+            { key: 'images', label: 'Avatar, banner ve skinler', bytes: avatars.bytes + banners.bytes + skins.bytes },
+            { key: 'messages', label: 'Mesajlar', bytes: messages.bytes },
+        ],
+    });
+});
+
 // ── Kullanıcılar ──────────────────────────────────────────────────────
 // Kullanıcı adı sonradan değiştirilemez: Minecraft oyuncu kimliğini (dünyalardaki eşyalar, ilerleme) addan
 // türetir; paketler, avatarlar ve geri bildirimler de ada bağlıdır.

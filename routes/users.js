@@ -26,6 +26,9 @@ function publicProfile(user, packCount = 0) {
         isAdmin: !!user.isAdmin,
         avatarVersion: user.avatarVersion || 0,
         bannerVersion: user.bannerVersion || 0,
+        playtime: user.playtime && user.playtime.totalSeconds > 0
+            ? { totalSeconds: user.playtime.totalSeconds, top: (user.playtime.top || []).map(t => ({ name: t.name, seconds: t.seconds })) }
+            : null,
         skinHash: user.skinHash || '',
         skinModel: user.skinModel === 'slim' ? 'slim' : 'default',
         createdAt: user.createdAt || null,
@@ -176,6 +179,29 @@ router.delete('/me/banner', requireAuth, async (req, res) => {
     await Banner.deleteOne({ username: req.user.username });
     await setFields(req.user, { bannerVersion: 0 });
     res.json(publicProfile(req.user));
+});
+
+// PUT /users/me/playtime { totalSeconds, top: [{ name, seconds }] } — profilde görünen oynama istatistiği
+router.put('/me/playtime', requireAuth, async (req, res) => {
+    const b = req.body || {};
+    const seconds = v => (Number.isFinite(v) && v >= 0 ? Math.min(Math.floor(v), 100 * 365 * 24 * 3600) : null);
+    const total = seconds(b.totalSeconds);
+    if (total === null || !Array.isArray(b.top) || b.top.length > 5) return res.status(400).json({ error: 'Oynama süresi geçersiz.' });
+    const top = [];
+    for (const t of b.top) {
+        const name = typeof t?.name === 'string' ? t.name.trim().slice(0, 64) : '';
+        const s = seconds(t?.seconds);
+        if (!name || s === null) return res.status(400).json({ error: 'Oynama süresi geçersiz.' });
+        top.push({ name, seconds: s });
+    }
+    await setFields(req.user, { playtime: { totalSeconds: total, top, updatedAt: new Date() } });
+    res.json({ ok: true });
+});
+
+// DELETE /users/me/playtime — kullanıcı göstermek istemiyor
+router.delete('/me/playtime', requireAuth, async (req, res) => {
+    await User.updateOne({ _id: req.user._id }, { $unset: { playtime: '' } });
+    res.json({ ok: true });
 });
 
 // ── Skin ──────────────────────────────────────────────────────────────

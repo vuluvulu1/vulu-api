@@ -16,6 +16,14 @@ const shotSchema = new mongoose.Schema({
     height: { type: Number, default: 0 },
     size: { type: Number, default: 0 },          // resim + önizleme bayt
     likes: { type: [String], default: [] },
+    comments: {
+        type: [{
+            author: { type: String, required: true },
+            text: { type: String, required: true, maxlength: 300 },
+            createdAt: { type: Date, default: Date.now },
+        }],
+        default: [],
+    },
     createdAt: { type: Date, default: Date.now, index: true },
 });
 

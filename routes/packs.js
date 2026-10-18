@@ -14,6 +14,26 @@ const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image
 const COVER_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 const LOADERS = ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'];
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
+const CHANGELOG_KEEP = 30;
+const MAX_CHANGE_LIST = 200;   // tek revizyonda listelenen en fazla ekleme/çıkarma
+
+/** İki mod listesinin farkı: proje (yoksa dosya) kimliğine göre eşleştirilir. */
+function diffMods(oldMods, newMods) {
+    const key = m => m.projectId || m.file || m.title;
+    const label = m => m.title || m.file || m.projectId || '?';
+    const before = new Map((oldMods || []).map(m => [key(m), m]));
+    const after = new Map((newMods || []).map(m => [key(m), m]));
+    const added = [], removed = [], updated = [];
+    for (const [k, m] of after) {
+        const old = before.get(k);
+        if (!old) added.push(label(m));
+        else if ((old.versionId || old.versionNumber) !== (m.versionId || m.versionNumber))
+            updated.push({ title: label(m), from: String(old.versionNumber || ''), to: String(m.versionNumber || '') });
+    }
+    for (const [k, m] of before) if (!after.has(k)) removed.push(label(m));
+    const sort = a => a.sort((x, y) => String(x.title || x).localeCompare(String(y.title || y), 'tr'));
+    return { added: sort(added).slice(0, MAX_CHANGE_LIST), removed: sort(removed).slice(0, MAX_CHANGE_LIST), updated: sort(updated).slice(0, MAX_CHANGE_LIST) };
+}
 
 const bucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: BUCKET });
 const fileCollection = () => mongoose.connection.db.collection(`${BUCKET}.files`);
@@ -38,6 +58,10 @@ function toClient(pack) {
         coverExt: pack.coverExt || null,
         hasLogo: !!pack.logoFileId,
         logoExt: pack.logoExt || null,
+        changelog: (pack.changelog || []).map(c => ({
+            revision: c.revision, at: c.at, by: c.by, note: c.note || '',
+            added: c.added || [], removed: c.removed || [], updated: c.updated || [], filesChanged: !!c.filesChanged,
+        })),
     };
 }
 
@@ -182,6 +206,8 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
 
     if (name.length < 1 || name.length > 40) return res.status(400).json({ error: 'Paket adı 1-40 karakter olmalı.' });
     if (description.length > 600) return res.status(400).json({ error: 'Açıklama en fazla 600 karakter olabilir.' });
+    const note = typeof body.changeNote === 'string' ? body.changeNote.trim() : '';
+    if (note.length > 1000) return res.status(400).json({ error: 'Güncelleme notu en fazla 1000 karakter olabilir.' });
     if (!body.mcVersion || !LOADERS.includes(body.loader)) return res.status(400).json({ error: 'Sürüm bilgisi eksik.' });
     // Sürümler kurulan dosya ve klasör adlarına dönüşür; yalnızca sürüm karakterlerine izin verilir
     if (!VERSION.test(String(body.mcVersion)) || (body.loader !== 'vanilla' && !VERSION.test(String(body.loaderVersion || ''))))
@@ -231,7 +257,13 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         const oldOverrides = pack.overridesFileId;
         const oldCover = cover ? pack.coverFileId : null;
         const oldLogo = logo || clearLogo ? pack.logoFileId : null;
-        Object.assign(pack, fields, { revision: pack.revision + 1 });
+        const change = {
+            revision: pack.revision + 1, at: new Date(), by: req.user.username, note,
+            ...diffMods(pack.mods, fields.mods),
+            filesChanged: pack.overridesSize !== fields.overridesSize,
+        };
+        const changelog = [...(pack.changelog || []), change].slice(-CHANGELOG_KEEP);
+        Object.assign(pack, fields, { revision: pack.revision + 1, changelog });
         await pack.save();
 
         await deleteFile(oldOverrides);
@@ -240,7 +272,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         return res.json(toClient(pack));
     }
 
-    const pack = await Pack.create(fields);
+    const pack = await Pack.create({ ...fields, changelog: [{ revision: 1, at: new Date(), by: req.user.username, note, added: [], removed: [], updated: [] }] });
     res.json(toClient(pack));
 });
 

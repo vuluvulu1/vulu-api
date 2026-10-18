@@ -17,6 +17,18 @@ const modSchema = new mongoose.Schema({
     size: Number,
 }, { _id: false });
 
+// Bir revizyonda neyin değiştiği: mod listesi farkı sunucuda hesaplanır, not admin'den gelir
+const changeSchema = new mongoose.Schema({
+    revision: Number,
+    at: { type: Date, default: Date.now },
+    by: String,
+    note: { type: String, default: '', maxlength: 1000 },
+    added: { type: [String], default: [] },
+    removed: { type: [String], default: [] },
+    updated: { type: [{ title: String, from: String, to: String, _id: false }], default: [] },
+    filesChanged: { type: Boolean, default: false },
+}, { _id: false });
+
 const packSchema = new mongoose.Schema({
     name: { type: String, required: true, maxlength: 40 },
     description: { type: String, default: '', maxlength: 600 },
@@ -37,6 +49,7 @@ const packSchema = new mongoose.Schema({
     // Ana ekranda paket adının yerine gösterilen logo (isteğe bağlı)
     logoFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
     logoExt: { type: String, default: null },
+    changelog: { type: [changeSchema], default: [] },
 });
 
 module.exports = mongoose.model('Pack', packSchema, 'packs');
