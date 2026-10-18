@@ -114,6 +114,7 @@ router.delete('/users/:id', async (req, res) => {
 
     await User.deleteOne({ _id: user._id });
     await Avatar.deleteOne({ username: user.username });
+    await require('../models/Banner').deleteOne({ username: user.username });
     await GameSession.deleteMany({ username: user.username });
     await PanelToken.deleteMany({ username: user.username });
     await MessageKey.deleteOne({ username: user.username });

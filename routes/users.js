@@ -2,6 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const Avatar = require('../models/Avatar');
+const Banner = require('../models/Banner');
 const Pack = require('../models/Pack');
 const crypto = require('crypto');
 const Skin = require('../models/Skin');
@@ -14,6 +15,7 @@ const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash 
 const router = express.Router();
 
 const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+const BANNER_MAX_BYTES = 1.5 * 1024 * 1024;   // launcher büyük resimleri yüklemeden önce küçültür
 const MAX_BIO = 300;
 
 // Şifre hash'i ve izinler asla dışarı verilmez
@@ -23,6 +25,7 @@ function publicProfile(user, packCount = 0) {
         bio: user.bio || '',
         isAdmin: !!user.isAdmin,
         avatarVersion: user.avatarVersion || 0,
+        bannerVersion: user.bannerVersion || 0,
         skinHash: user.skinHash || '',
         skinModel: user.skinModel === 'slim' ? 'slim' : 'default',
         createdAt: user.createdAt || null,
@@ -140,6 +143,38 @@ router.put('/me/avatar', requireAuth, express.raw({ type: AVATAR_TYPES, limit: '
 router.delete('/me/avatar', requireAuth, async (req, res) => {
     await Avatar.deleteOne({ username: req.user.username });
     await setFields(req.user, { avatarVersion: 0 });
+    res.json(publicProfile(req.user));
+});
+
+/** Gövdenin gerçekten beyan edilen türde bir resim olup olmadığı (ilk baytlarından). */
+function looksLike(type, buf) {
+    if (!Buffer.isBuffer(buf) || buf.length < 16) return false;
+    if (type === 'image/png') return buf.readUInt32BE(0) === 0x89504e47;
+    if (type === 'image/jpeg') return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+    if (type === 'image/gif') return buf.toString('ascii', 0, 4) === 'GIF8';
+    if (type === 'image/webp') return buf.toString('ascii', 0, 4) === 'RIFF' && buf.toString('ascii', 8, 12) === 'WEBP';
+    return false;
+}
+
+// PUT /users/me/banner — gövde resmin kendisi (Content-Type: image/png vb.)
+router.put('/me/banner', requireAuth, express.raw({ type: AVATAR_TYPES, limit: BANNER_MAX_BYTES }), async (req, res) => {
+    const contentType = (req.headers['content-type'] || '').split(';')[0].trim();
+    if (!AVATAR_TYPES.includes(contentType) || !looksLike(contentType, req.body))
+        return res.status(400).json({ error: 'Desteklenen biçimler: PNG, JPG, WEBP, GIF (en fazla 1,5 MB).' });
+
+    await Banner.findOneAndUpdate(
+        { username: req.user.username },
+        { data: req.body, contentType, updatedAt: new Date() },
+        { upsert: true });
+
+    await setFields(req.user, { bannerVersion: Date.now() });
+    res.json(publicProfile(req.user));
+});
+
+// DELETE /users/me/banner
+router.delete('/me/banner', requireAuth, async (req, res) => {
+    await Banner.deleteOne({ username: req.user.username });
+    await setFields(req.user, { bannerVersion: 0 });
     res.json(publicProfile(req.user));
 });
 
@@ -263,6 +298,16 @@ router.get('/:username/avatar', async (req, res) => {
     res.set('Content-Type', avatar.contentType);
     res.set('Cache-Control', 'public, max-age=604800, immutable');
     res.send(avatar.data);
+});
+
+// GET /users/:username/banner — avatar gibi herkese açık; adres ?v=bannerVersion ile değişir
+router.get('/:username/banner', async (req, res) => {
+    if (typeof req.params.username !== 'string' || !/^[A-Za-z0-9_]{3,16}$/.test(req.params.username)) return res.status(404).end();
+    const banner = await Banner.findOne({ username: req.params.username });
+    if (!banner) return res.status(404).end();
+    res.set('Content-Type', banner.contentType);
+    res.set('Cache-Control', 'public, max-age=604800, immutable');
+    res.send(banner.data);
 });
 
 module.exports = router;
