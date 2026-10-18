@@ -25,6 +25,26 @@ app.use((req, res, next) => {
     next();
 });
 
+// vulu web sitesi API'yi tarayıcıdan çağırır; yalnızca listedeki adreslere izin verilir.
+// Launcher istekleri C# tarafından Origin başlığı olmadan gelir, bundan etkilenmez.
+// CORS_ORIGINS virgülle ayrılmış liste, ör. "https://vulu.vercel.app,http://localhost:5173"
+const CORS_ORIGINS = new Set((process.env.CORS_ORIGINS || 'http://localhost:5173')
+    .split(',').map(s => s.trim()).filter(Boolean));
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin && CORS_ORIGINS.has(origin)) {
+        res.set({
+            'Access-Control-Allow-Origin': origin,
+            'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+            'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+            'Access-Control-Max-Age': '600',
+            'Vary': 'Origin',
+        });
+        if (req.method === 'OPTIONS') return res.sendStatus(204);
+    }
+    next();
+});
+
 // Genel sınır: tek bir IP'nin sunucuyu boğmasına karşı (launcher normal kullanımda bunun çok altında kalır)
 app.use(limitByIp({ windowMs: 60 * 1000, max: 240, message: 'Çok fazla istek. Biraz bekleyip tekrar dene.' }));
 
