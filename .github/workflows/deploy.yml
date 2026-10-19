@@ -1,0 +1,32 @@
+# main'e her push'ta API'yi VDS'e yükler. Deploy anahtarı sunucuda yalnızca /usr/local/bin/vulu-api-deploy'u
+# çalıştırabilir: kaynağı yeni sürüm klasörüne açar, npm ci yapar, servisi yeniden başlatır; /ping cevap vermezse
+# önceki sürüme döner. Gizli değerler (.env) sunucuda durur, repoda değil.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Upload to VDS
+        env:
+          SSH_KEY: ${{ secrets.VDS_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VDS_KNOWN_HOSTS }}
+          HOST: ${{ secrets.VDS_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          git archive --format=tar.gz HEAD | ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "deploy@$HOST"

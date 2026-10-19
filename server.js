@@ -10,7 +10,7 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)
 const app = express();
 app.disable('x-powered-by');
 app.use(express.json({ limit: '2mb' }));
-// Render bir vekil sunucunun arkasında; kayıt sınırı için gerçek istemci IP'si req.ip'e gelsin
+// API bir vekil sunucunun (VDS'te Caddy, Render'da onun vekili) arkasında; kayıt sınırı için gerçek istemci IP'si req.ip'e gelsin
 app.set('trust proxy', 1);
 
 // Tarayıcıya yönelik temel güvenlik başlıkları (API yalnızca JSON ve resim döndürür)
