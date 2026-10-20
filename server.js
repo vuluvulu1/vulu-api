@@ -69,6 +69,7 @@ app.use('/shots', require('./routes/shots'));
 app.use('/announcements', require('./routes/announcements'));
 app.use('/admin', require('./routes/admin'));
 app.use('/yggdrasil', require('./routes/yggdrasil').router);
+app.use('/stats', require('./routes/stats'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));
