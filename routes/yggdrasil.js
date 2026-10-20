@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const User = require('../models/User');
 const Skin = require('../models/Skin');
 const GameSession = require('../models/GameSession');
+const YggdrasilJoin = require('../models/YggdrasilJoin');
 const { offlineUuid, signingKey, profileOf, baseUrlOf } = require('../lib/yggdrasil');
 
 /**
@@ -17,7 +18,6 @@ const router = express.Router();
 const UUID = /^[0-9a-f]{32}$/;
 const NAME = /^[A-Za-z0-9_]{1,16}$/;
 const JOIN_TTL_MS = 30 * 1000;
-const joins = new Map(); // serverId → { username, profileId, ip, at }
 
 const tokenHash = token => crypto.createHash('sha256').update(String(token)).digest('hex');
 const forbidden = (res, message) => res.status(403).json({ error: 'ForbiddenOperationException', errorMessage: message });
@@ -77,16 +77,18 @@ router.post('/sessionserver/session/minecraft/join', async (req, res) => {
         return forbidden(res, 'Invalid token.');
     if (!(await activeUser(session.username))) return forbidden(res, 'Invalid token.');
 
-    joins.set(serverId, { username: session.username, profileId: session.profileId, ip: req.ip, at: Date.now() });
+    await YggdrasilJoin.updateOne({ _id: serverId },
+        { $set: { username: session.username, profileId: session.profileId, ip: req.ip || '', at: new Date() } },
+        { upsert: true });
     res.status(204).end();
 });
 
 // GET /yggdrasil/sessionserver/session/minecraft/hasJoined?username=&serverId=&ip= — sunucu oyuncuyu doğrular
 router.get('/sessionserver/session/minecraft/hasJoined', async (req, res) => {
-    const join = joins.get(String(req.query.serverId || ''));
-    if (!join || Date.now() - join.at > JOIN_TTL_MS || join.username !== req.query.username) return res.status(204).end();
+    const join = await YggdrasilJoin.findById(String(req.query.serverId || '')).lean();
+    if (!join || Date.now() - new Date(join.at).getTime() > JOIN_TTL_MS || join.username !== req.query.username) return res.status(204).end();
     if (req.query.ip && req.query.ip !== join.ip) return res.status(204).end();
-    joins.delete(String(req.query.serverId));
+    await YggdrasilJoin.deleteOne({ _id: join._id });
 
     const user = await activeUser(join.username);
     if (!user) return res.status(204).end();
@@ -117,11 +119,5 @@ router.post('/authserver/validate', async (req, res) => {
 });
 router.post(['/authserver/authenticate', '/authserver/refresh', '/authserver/signout', '/authserver/invalidate'],
     (req, res) => forbidden(res, 'vulu Launcher ile giriş yap.'));
-
-// Süresi dolan katılma kayıtları ara ara temizlenir
-setInterval(() => {
-    const now = Date.now();
-    for (const [id, join] of joins) if (now - join.at > JOIN_TTL_MS) joins.delete(id);
-}, 60 * 1000).unref();
 
 module.exports = { router, tokenHash };
