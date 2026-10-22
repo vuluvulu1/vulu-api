@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Pack = require('../models/Pack');
 const Shot = require('../models/Shot');
 const Presence = require('../models/Presence');
+const { downloadCounts } = require('./download');
 
 /**
  * GET /stats — herkese açık sayılar (web sitesinin ana sayfası için). Yalnızca sayı döner;
@@ -17,14 +18,15 @@ let cached = null;
 
 async function compute() {
     const since = new Date(Date.now() - PRESENCE_TTL);
-    const [members, packs, shots, online, playing] = await Promise.all([
+    const [members, packs, shots, online, playing, downloads] = await Promise.all([
         User.countDocuments({ isActive: { $ne: false } }),
         Pack.estimatedDocumentCount(),
         Shot.estimatedDocumentCount(),
         Presence.countDocuments({ at: { $gt: since } }),
         Presence.countDocuments({ at: { $gt: since }, state: 'playing' }),
+        downloadCounts(),
     ]);
-    return { members, packs, shots, online, playing, at: new Date() };
+    return { members, packs, shots, online, playing, downloads, at: new Date() };
 }
 
 router.get('/', async (req, res) => {
