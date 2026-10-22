@@ -131,7 +131,7 @@ router.patch('/users/:id', async (req, res) => {
     const set = {};
     if (typeof req.body.isAdmin === 'boolean') set.isAdmin = req.body.isAdmin;
     if (typeof req.body.isActive === 'boolean') set.isActive = req.body.isActive;
-    if (req.body.roles !== undefined) {
+    if (req.body.roles !== undefined && req.body.roles !== null) {
         if (!Array.isArray(req.body.roles) || req.body.roles.length > 50 || req.body.roles.some(r => !mongoose.isValidObjectId(r)))
             return res.status(400).json({ error: 'Rol listesi geçersiz.' });
         const roles = [...new Set(req.body.roles.map(String))];

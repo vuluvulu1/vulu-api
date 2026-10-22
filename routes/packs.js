@@ -239,9 +239,9 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     }
     const clearLogo = !logo && body.clearLogo === true;
 
-    // Kimler erişebilir: rol kimlikleri; boş liste herkese açık demek. Verilmezse güncellemede eskisi kalır.
+    // Kimler erişebilir: rol kimlikleri; boş liste herkese açık demek. Verilmezse (ya da null) güncellemede eskisi kalır.
     let roles;
-    if (body.roles !== undefined) {
+    if (body.roles !== undefined && body.roles !== null) {
         if (!Array.isArray(body.roles) || body.roles.length > 50 || body.roles.some(r => !mongoose.isValidObjectId(r)))
             return res.status(400).json({ error: 'Rol listesi geçersiz.' });
         roles = [...new Set(body.roles.map(String))];
