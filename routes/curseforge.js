@@ -99,6 +99,13 @@ router.get('/mods/:id', (req, res) => {
     return forward(res, `/v1/mods/${id}`);
 });
 
+// GET /curseforge/mods/:id/description — projenin açıklaması (HTML; launcher temizleyip gösterir)
+router.get('/mods/:id/description', (req, res) => {
+    const id = int(req.params.id);
+    if (!id) return res.status(404).json({ error: 'CurseForge\'da bulunamadı.' });
+    return forward(res, `/v1/mods/${id}/description`, { ttl: TTL.long });
+});
+
 // GET /curseforge/mods/:id/files?gameVersion=&modLoaderType=&index=&pageSize=
 router.get('/mods/:id/files', (req, res) => {
     const id = int(req.params.id);
