@@ -1,9 +1,10 @@
 const mongoose = require('mongoose');
 
 // vulu Packs: adminin launcher'dan paylaştığı instance'lar.
-// Modrinth modları sürümü sabitlenmiş indirme adresiyle listelenir; seçilen klasörlerin zip'i
+// CurseForge ve Modrinth modları sürümü sabitlenmiş indirme adresiyle listelenir; seçilen klasörlerin zip'i
 // ve kapak resmi GridFS'in "packfiles" deposunda durur.
 const modSchema = new mongoose.Schema({
+    source: { type: String, enum: ['modrinth', 'curseforge'], default: 'modrinth' },
     projectId: String,
     versionId: String,
     title: String,

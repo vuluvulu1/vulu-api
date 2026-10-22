@@ -15,6 +15,8 @@ const COVER_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 const LOADERS = ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'];
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,39}$/;
 const CHANGELOG_KEEP = 30;
+// Paketteki modların indirilebileceği yerler: Modrinth ve CurseForge'un kendi dağıtım sunucuları
+const MOD_HOSTS = ['https://cdn.modrinth.com/', 'https://edge.forgecdn.net/', 'https://mediafilez.forgecdn.net/'];
 const MAX_CHANGE_LIST = 200;   // tek revizyonda listelenen en fazla ekleme/çıkarma
 
 /** İki mod listesinin farkı: proje (yoksa dosya) kimliğine göre eşleştirilir. */
@@ -213,8 +215,8 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     if (!VERSION.test(String(body.mcVersion)) || (body.loader !== 'vanilla' && !VERSION.test(String(body.loaderVersion || ''))))
         return res.status(400).json({ error: 'Sürüm bilgisi geçersiz.' });
     if (!Array.isArray(body.mods) || body.mods.length > 2000) return res.status(400).json({ error: 'Mod listesi geçersiz.' });
-    if (body.mods.some(m => !m || typeof m.url !== 'string' || !m.url.startsWith('https://cdn.modrinth.com/')))
-        return res.status(400).json({ error: 'Modlar yalnızca Modrinth adreslerinden indirilebilir.' });
+    if (body.mods.some(m => !m || typeof m.url !== 'string' || !MOD_HOSTS.some(h => m.url.startsWith(h))))
+        return res.status(400).json({ error: 'Modlar yalnızca CurseForge ya da Modrinth adreslerinden indirilebilir.' });
 
     const overrides = await ownedUpload(body.overridesFileId, 'overrides', req.user.username);
     if (!overrides) return res.status(400).json({ error: 'Paket dosyası bulunamadı, tekrar yükleyin.' });
