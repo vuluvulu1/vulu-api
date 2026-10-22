@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const Server = require('../models/Server');
 const Pack = require('../models/Pack');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { visiblePacksQuery } = require('../lib/access');
 
 const router = express.Router();
 const HOST = /^(?=.{1,120}$)[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::(\d{1,5}))?$/;
@@ -29,10 +30,14 @@ async function clean(body) {
     return { value: { name, address, description, packId, mcVersion: packId ? '' : mcVersion } };
 }
 
-// GET /servers
+// GET /servers — paketi rolle kısıtlı sunucular yalnızca o paketi görebilenlere listelenir
 router.get('/', requireAuth, async (req, res) => {
-    const servers = await Server.find().sort({ order: 1, createdAt: 1 }).lean();
-    res.json(servers.map(toClient));
+    const [servers, visible] = await Promise.all([
+        Server.find().sort({ order: 1, createdAt: 1 }).lean(),
+        Pack.find(visiblePacksQuery(req.user)).select('_id').lean(),
+    ]);
+    const packs = new Set(visible.map(p => String(p._id)));
+    res.json(servers.filter(s => !s.packId || req.user.isAdmin || packs.has(String(s.packId))).map(toClient));
 });
 
 // POST /servers (admin)

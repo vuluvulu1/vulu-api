@@ -2,6 +2,8 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Pack = require('../models/Pack');
 const Feedback = require('../models/Feedback');
+const Role = require('../models/Role');
+const { canSeePack, visiblePacksQuery } = require('../lib/access');
 const { requireAuth, requireAdmin, requirePackReader } = require('../middleware/auth');
 const { squareLogo } = require('../lib/squareLogo');
 
@@ -40,8 +42,10 @@ function diffMods(oldMods, newMods) {
 const bucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: BUCKET });
 const fileCollection = () => mongoose.connection.db.collection(`${BUCKET}.files`);
 
-function toClient(pack) {
+/** Paketin istemciye gönderilen hali. Hangi rollere açık olduğunu yalnızca adminler görür. */
+function toClient(pack, user) {
     return {
+        ...(user && user.isAdmin ? { roles: (pack.roles || []).map(String) } : {}),
         id: String(pack._id),
         name: pack.name,
         description: pack.description || '',
@@ -86,23 +90,23 @@ function streamFile(res, fileId, contentType, cacheable) {
         .pipe(res);
 }
 
-// GET /packs
+// GET /packs — kullanıcının rolleriyle görebildiği paketler
 router.get('/', requirePackReader, async (req, res) => {
-    const packs = await Pack.find().sort({ updatedAt: -1 }).lean();
-    res.json(packs.map(toClient));
+    const packs = await Pack.find(visiblePacksQuery(req.user)).sort({ updatedAt: -1 }).lean();
+    res.json(packs.map(p => toClient(p, req.user)));
 });
 
-// GET /packs/:id
+// GET /packs/:id — görme yetkisi olmayana paket yokmuş gibi davranılır
 router.get('/:id', requirePackReader, async (req, res) => {
     const pack = await findPack(req.params.id);
-    if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
-    res.json(toClient(pack));
+    if (!pack || !canSeePack(req.user, pack)) return res.status(404).json({ error: 'Paket bulunamadı.' });
+    res.json(toClient(pack, req.user));
 });
 
 // GET /packs/:id/overrides — seçilen klasörlerin zip'i
 router.get('/:id/overrides', requirePackReader, async (req, res) => {
     const pack = await findPack(req.params.id);
-    if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
+    if (!pack || !canSeePack(req.user, pack)) return res.status(404).json({ error: 'Paket bulunamadı.' });
     res.set('Content-Length', String(pack.overridesSize || ''));
     streamFile(res, pack.overridesFileId, 'application/zip', false);
 });
@@ -235,6 +239,16 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     }
     const clearLogo = !logo && body.clearLogo === true;
 
+    // Kimler erişebilir: rol kimlikleri; boş liste herkese açık demek. Verilmezse güncellemede eskisi kalır.
+    let roles;
+    if (body.roles !== undefined) {
+        if (!Array.isArray(body.roles) || body.roles.length > 50 || body.roles.some(r => !mongoose.isValidObjectId(r)))
+            return res.status(400).json({ error: 'Rol listesi geçersiz.' });
+        roles = [...new Set(body.roles.map(String))];
+        if (await Role.countDocuments({ _id: { $in: roles } }) !== roles.length)
+            return res.status(400).json({ error: 'Seçilen rollerden biri artık yok; listeyi yenileyip tekrar dene.' });
+    }
+
     const fields = {
         name, description,
         author: req.user.username,
@@ -251,6 +265,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     if (cover) { fields.coverFileId = cover._id; fields.coverExt = body.coverExt; }
     if (logo) { fields.logoFileId = logo._id; fields.logoExt = body.logoExt; }
     if (clearLogo) { fields.logoFileId = null; fields.logoExt = null; }
+    if (roles) fields.roles = roles;
 
     if (body.id) {
         const pack = await findPack(body.id);
@@ -271,11 +286,11 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         await deleteFile(oldOverrides);
         await deleteFile(oldCover);
         await deleteFile(oldLogo);
-        return res.json(toClient(pack));
+        return res.json(toClient(pack, req.user));
     }
 
     const pack = await Pack.create({ ...fields, changelog: [{ revision: 1, at: new Date(), by: req.user.username, note, added: [], removed: [], updated: [] }] });
-    res.json(toClient(pack));
+    res.json(toClient(pack, req.user));
 });
 
 // DELETE /packs/:id  (admin)

@@ -51,6 +51,8 @@ const packSchema = new mongoose.Schema({
     logoFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
     logoExt: { type: String, default: null },
     changelog: { type: [changeSchema], default: [] },
+    // Paketi görebilecek roller; boşsa herkese açık (bkz. lib/access.js)
+    roles: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }], default: [] },
 });
 
 module.exports = mongoose.model('Pack', packSchema, 'packs');

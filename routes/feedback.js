@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const Feedback = require('../models/Feedback');
 const Pack = require('../models/Pack');
+const { canSeePack, visiblePacksQuery } = require('../lib/access');
 const User = require('../models/User');
 const { requireAuth } = require('../middleware/auth');
 
@@ -46,8 +47,10 @@ async function avatarVersions(items) {
 
 // GET /feedback/counts — paket başına açık geri bildirim sayısı (kartlardaki rozet için)
 router.get('/counts', requireAuth, async (req, res) => {
+    // Görülemeyen paketlerin sayısı verilmez
+    const visible = (await Pack.find(visiblePacksQuery(req.user)).select('_id').lean()).map(p => p._id);
     const rows = await Feedback.aggregate([
-        { $match: { status: 'open' } },
+        { $match: { status: 'open', $or: [{ pack: null }, { pack: { $in: visible } }] } },
         { $group: { _id: '$pack', count: { $sum: 1 } } },
     ]);
     const counts = {};
@@ -59,6 +62,8 @@ router.get('/counts', requireAuth, async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
     const filter = packFilter(req.query.pack);
     if (!filter) return res.status(400).json({ error: 'Geçersiz paket.' });
+    if (filter.pack && !canSeePack(req.user, await Pack.findById(filter.pack).select('roles').lean()))
+        return res.status(404).json({ error: 'Paket bulunamadı.' });
 
     // Açıklar önce, sonra en yeniler
     const items = await Feedback.find(filter).sort({ status: -1, createdAt: -1 }).limit(300).lean();
@@ -75,7 +80,7 @@ router.post('/', requireAuth, async (req, res) => {
 
     const filter = packFilter(req.body.pack);
     if (!filter) return res.status(400).json({ error: 'Geçersiz paket.' });
-    if (filter.pack && !(await Pack.exists({ _id: filter.pack })))
+    if (filter.pack && !canSeePack(req.user, await Pack.findById(filter.pack).select('roles').lean()))
         return res.status(404).json({ error: 'Paket bulunamadı.' });
 
     const last = await Feedback.findOne({ authorId: req.user._id }).sort({ createdAt: -1 }).select('createdAt').lean();

@@ -12,6 +12,7 @@ const Presence = require('../models/Presence');
 const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
 const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash } = require('../middleware/auth');
+const { visiblePacksQuery, roleMap, rolesOf } = require('../lib/access');
 
 const router = express.Router();
 
@@ -19,12 +20,13 @@ const AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
 const BANNER_MAX_BYTES = 1.5 * 1024 * 1024;   // launcher büyük resimleri yüklemeden önce küçültür
 const MAX_BIO = 300;
 
-// Şifre hash'i ve izinler asla dışarı verilmez
-function publicProfile(user, packCount = 0) {
+// Şifre hash'i ve izinler asla dışarı verilmez. roles: profildeki rol rozetleri ({ id, name, color })
+function publicProfile(user, packCount = 0, roles = new Map()) {
     return {
         username: user.username,
         bio: user.bio || '',
         isAdmin: !!user.isAdmin,
+        roles: rolesOf(user, roles),
         avatarVersion: user.avatarVersion || 0,
         bannerVersion: user.bannerVersion || 0,
         playtime: user.playtime && user.playtime.totalSeconds > 0
@@ -47,18 +49,20 @@ async function setFields(user, fields) {
     user.set(fields);
 }
 
-async function packCounts() {
-    const rows = await Pack.aggregate([{ $group: { _id: '$author', count: { $sum: 1 } } }]);
+/** Yazar başına, bakan kullanıcının görebildiği paket sayısı. */
+async function packCounts(viewer) {
+    const rows = await Pack.aggregate([{ $match: visiblePacksQuery(viewer) }, { $group: { _id: '$author', count: { $sum: 1 } } }]);
     return Object.fromEntries(rows.map(r => [r._id, r.count]));
 }
 
 // GET /users — bütün aktif kullanıcılar
 router.get('/', requireAuth, async (req, res) => {
-    const [users, counts] = await Promise.all([
+    const [users, counts, roles] = await Promise.all([
         User.find({ isActive: true }).sort({ lastSeenAt: -1, username: 1 }),
-        packCounts(),
+        packCounts(req.user),
+        roleMap(),
     ]);
-    res.json(users.map(u => publicProfile(u, counts[u.username] || 0)));
+    res.json(users.map(u => publicProfile(u, counts[u.username] || 0, roles)));
 });
 
 // ── Çevrimiçi durum (arkadaş listesi) ────────────────────────────────
@@ -110,8 +114,8 @@ router.get('/presence', requireAuth, async (req, res) => {
 
 // GET /users/me
 router.get('/me', requireAuth, async (req, res) => {
-    const counts = await packCounts();
-    res.json(publicProfile(req.user, counts[req.user.username] || 0));
+    const [counts, roles] = await Promise.all([packCounts(req.user), roleMap()]);
+    res.json(publicProfile(req.user, counts[req.user.username] || 0, roles));
 });
 
 // PUT /users/me — açıklama
@@ -120,7 +124,7 @@ router.put('/me', requireAuth, async (req, res) => {
     if (bio.length > MAX_BIO) return res.status(400).json({ error: `Açıklama en fazla ${MAX_BIO} karakter olabilir.` });
 
     await setFields(req.user, { bio });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // PUT /users/me/avatar — gövde resmin kendisi (Content-Type: image/png vb.)
@@ -135,14 +139,14 @@ router.put('/me/avatar', requireAuth, express.raw({ type: AVATAR_TYPES, limit: '
         { upsert: true });
 
     await setFields(req.user, { avatarVersion: Date.now() });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // DELETE /users/me/avatar
 router.delete('/me/avatar', requireAuth, async (req, res) => {
     await Avatar.deleteOne({ username: req.user.username });
     await setFields(req.user, { avatarVersion: 0 });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 /** Gövdenin gerçekten beyan edilen türde bir resim olup olmadığı (ilk baytlarından). */
@@ -167,14 +171,14 @@ router.put('/me/banner', requireAuth, express.raw({ type: AVATAR_TYPES, limit: B
         { upsert: true });
 
     await setFields(req.user, { bannerVersion: Date.now() });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // DELETE /users/me/banner
 router.delete('/me/banner', requireAuth, async (req, res) => {
     await Banner.deleteOne({ username: req.user.username });
     await setFields(req.user, { bannerVersion: 0 });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // PUT /users/me/playtime { totalSeconds, top: [{ name, seconds }] } — profilde görünen oynama istatistiği
@@ -229,14 +233,14 @@ router.put('/me/skin', requireAuth, express.raw({ type: 'image/png', limit: SKIN
     const previous = req.user.skinHash;
     await setFields(req.user, { skinHash: hash, skinModel: req.query.model === 'slim' ? 'slim' : 'default' });
     if (previous && previous !== hash) await dropUnusedSkin(previous);
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // PUT /users/me/skin/model { model } — yalnızca beden tipi (Klasik / İnce)
 router.put('/me/skin/model', requireAuth, async (req, res) => {
     const model = req.body.model === 'slim' ? 'slim' : 'default';
     await setFields(req.user, { skinModel: model });
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // DELETE /users/me/skin — varsayılan skine dönülür
@@ -244,7 +248,7 @@ router.delete('/me/skin', requireAuth, async (req, res) => {
     const previous = req.user.skinHash;
     await setFields(req.user, { skinHash: '', skinModel: 'default' });
     await dropUnusedSkin(previous);
-    res.json(publicProfile(req.user));
+    res.json(publicProfile(req.user, 0, await roleMap()));
 });
 
 // POST /users/me/game-session — launcher oyunu başlatırken alır; oyun LAN'a/sunucuya katılırken bununla doğrulanır
@@ -301,11 +305,11 @@ router.get('/:username', requireAuth, async (req, res) => {
     const user = await User.findOne({ username: req.params.username, isActive: true });
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
 
-    const packs = await Pack.find({ author: user.username }).sort({ updatedAt: -1 })
+    const packs = await Pack.find({ author: user.username, ...visiblePacksQuery(req.user) }).sort({ updatedAt: -1 })
         .select('name revision updatedAt mcVersion loader coverFileId').lean();
 
     res.json({
-        ...publicProfile(user, packs.length),
+        ...publicProfile(user, packs.length, await roleMap()),
         packs: packs.map(p => ({
             id: String(p._id), name: p.name, revision: p.revision, updatedAt: p.updatedAt,
             mcVersion: p.mcVersion, loader: p.loader, hasCover: !!p.coverFileId,

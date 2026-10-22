@@ -9,6 +9,8 @@ const GameSession = require('../models/GameSession');
 const PanelToken = require('../models/PanelToken');
 const Message = require('../models/Message');
 const MessageKey = require('../models/MessageKey');
+const Role = require('../models/Role');
+const Pack = require('../models/Pack');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 const router = express.Router();
@@ -79,6 +81,7 @@ const userToClient = u => ({
     isActive: u.isActive !== false,
     createdAt: u.createdAt || null,
     lastSeenAt: u.lastSeenAt || null,
+    roles: (u.roles || []).map(String),
 });
 
 function validPassword(password) {
@@ -118,7 +121,7 @@ router.post('/users', async (req, res) => {
     res.status(201).json(userToClient(user));
 });
 
-// PATCH /admin/users/:id { password?, isAdmin?, isActive? }
+// PATCH /admin/users/:id { password?, isAdmin?, isActive?, roles? }
 router.patch('/users/:id', async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
     const user = await User.findById(req.params.id);
@@ -128,6 +131,14 @@ router.patch('/users/:id', async (req, res) => {
     const set = {};
     if (typeof req.body.isAdmin === 'boolean') set.isAdmin = req.body.isAdmin;
     if (typeof req.body.isActive === 'boolean') set.isActive = req.body.isActive;
+    if (req.body.roles !== undefined) {
+        if (!Array.isArray(req.body.roles) || req.body.roles.length > 50 || req.body.roles.some(r => !mongoose.isValidObjectId(r)))
+            return res.status(400).json({ error: 'Rol listesi geçersiz.' });
+        const roles = [...new Set(req.body.roles.map(String))];
+        if (await Role.countDocuments({ _id: { $in: roles } }) !== roles.length)
+            return res.status(400).json({ error: 'Seçilen rollerden biri artık yok; listeyi yenileyip tekrar dene.' });
+        set.roles = roles;
+    }
     if (req.body.password !== undefined && req.body.password !== '') {
         if (!validPassword(req.body.password)) return res.status(400).json({ error: 'Şifre 6-72 karakter olmalı.' });
         set.passwordHash = await bcrypt.hash(req.body.password, 10);
@@ -170,6 +181,70 @@ router.delete('/users/:id', async (req, res) => {
     await Message.deleteMany({ $or: [{ from: user.username }, { to: user.username }] });
     await require('./shots').deleteAllBy(user.username);
     if (user.skinHash && !(await User.exists({ skinHash: user.skinHash }))) await Skin.deleteOne({ hash: user.skinHash });
+    res.json({ success: true });
+});
+
+// ── Roller ────────────────────────────────────────────────────────────
+// Paketlere erişimi sınırlar (bkz. lib/access.js) ve profillerde rozet olarak görünür.
+const ROLE_COLOR = /^#[0-9a-f]{6}$/i;
+const MAX_ROLES = 50;
+const roleToClient = (r, counts = {}) => ({
+    id: String(r._id), name: r.name, color: r.color, createdAt: r.createdAt,
+    members: counts.members?.[String(r._id)] || 0, packs: counts.packs?.[String(r._id)] || 0,
+});
+
+function cleanRole(body) {
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    if (name.length < 1 || name.length > 24) return { error: 'Rol adı 1-24 karakter olmalı.' };
+    const color = typeof body.color === 'string' && ROLE_COLOR.test(body.color) ? body.color.toLowerCase() : '#9c704c';
+    return { value: { name, key: name.toLocaleLowerCase('tr'), color } };
+}
+
+async function roleUsage() {
+    const count = async Model => Object.fromEntries((await Model.aggregate([
+        { $unwind: '$roles' }, { $group: { _id: '$roles', n: { $sum: 1 } } },
+    ])).map(r => [String(r._id), r.n]));
+    return { members: await count(User), packs: await count(Pack) };
+}
+
+// GET /admin/roles — her rol, kaç kişide ve kaç pakette kullanıldığıyla
+router.get('/roles', async (req, res) => {
+    const [roles, usage] = await Promise.all([Role.find().sort({ createdAt: 1 }).lean(), roleUsage()]);
+    res.json(roles.map(r => roleToClient(r, usage)));
+});
+
+// POST /admin/roles { name, color }
+router.post('/roles', async (req, res) => {
+    const { value, error } = cleanRole(req.body || {});
+    if (error) return res.status(400).json({ error });
+    if (await Role.countDocuments() >= MAX_ROLES) return res.status(400).json({ error: `En fazla ${MAX_ROLES} rol oluşturulabilir.` });
+    if (await Role.exists({ key: value.key })) return res.status(409).json({ error: 'Bu adda bir rol zaten var.' });
+    res.status(201).json(roleToClient(await Role.create(value)));
+});
+
+// PATCH /admin/roles/:id { name?, color? }
+router.patch('/roles/:id', async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Rol bulunamadı.' });
+    const role = await Role.findById(req.params.id);
+    if (!role) return res.status(404).json({ error: 'Rol bulunamadı.' });
+    const { value, error } = cleanRole({ name: req.body.name ?? role.name, color: req.body.color ?? role.color });
+    if (error) return res.status(400).json({ error });
+    if (value.key !== role.key && await Role.exists({ key: value.key })) return res.status(409).json({ error: 'Bu adda bir rol zaten var.' });
+    Object.assign(role, value);
+    await role.save();
+    res.json(roleToClient(role, await roleUsage()));
+});
+
+// DELETE /admin/roles/:id — bir pakete erişimi belirleyen rol silinemez (silinirse paket herkese açılabilirdi)
+router.delete('/roles/:id', async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'Rol bulunamadı.' });
+    const role = await Role.findById(req.params.id);
+    if (!role) return res.status(404).json({ error: 'Rol bulunamadı.' });
+    const packs = await Pack.find({ roles: role._id }).select('name').lean();
+    if (packs.length)
+        return res.status(409).json({ error: `Bu rol şu paketlerin erişimini belirliyor: ${packs.map(p => p.name).join(', ')}. Önce paketlerden kaldır.` });
+    await User.updateMany({ roles: role._id }, { $pull: { roles: role._id } });
+    await Role.deleteOne({ _id: role._id });
     res.json({ success: true });
 });
 
