@@ -178,6 +178,7 @@ router.delete('/users/:id', async (req, res) => {
     await GameSession.deleteMany({ username: user.username });
     await PanelToken.deleteMany({ username: user.username });
     await MessageKey.deleteOne({ username: user.username });
+    await require('../models/Friendship').deleteMany({ $or: [{ a: user.username }, { b: user.username }] });
     await Message.deleteMany({ $or: [{ from: user.username }, { to: user.username }] });
     await require('./shots').deleteAllBy(user.username);
     if (user.skinHash && !(await User.exists({ skinHash: user.skinHash }))) await Skin.deleteOne({ hash: user.skinHash });

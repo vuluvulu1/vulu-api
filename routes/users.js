@@ -9,6 +9,7 @@ const Skin = require('../models/Skin');
 const GameSession = require('../models/GameSession');
 const PanelToken = require('../models/PanelToken');
 const Presence = require('../models/Presence');
+const Friendship = require('../models/Friendship');
 const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
 const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash } = require('../middleware/auth');
@@ -103,13 +104,20 @@ router.delete('/me/presence', requireAuth, async (req, res) => {
     res.json({ ok: true });
 });
 
-// GET /users/presence — çevrimiçi olanlar
+// GET /users/presence — çevrimiçi olanlar. Ne oynadığını (paket, sunucu, süre) yalnızca arkadaşlar görür;
+// arkadaş olmayanlar için yalnızca çevrimiçi olduğu bilinir.
 router.get('/presence', requireAuth, async (req, res) => {
-    const list = await Presence.find({ at: { $gt: new Date(Date.now() - PRESENCE_TTL) } }).lean();
-    res.json(list.map(p => ({
-        username: p._id, state: p.state, instance: p.instance, mcVersion: p.mcVersion, loader: p.loader,
-        packId: p.packId, server: p.server, since: new Date(p.since).toISOString(),
-    })));
+    const [list, friends] = await Promise.all([
+        Presence.find({ at: { $gt: new Date(Date.now() - PRESENCE_TTL) } }).lean(),
+        Friendship.friendsOf(req.user.username),
+    ]);
+    const close = new Set([...friends, req.user.username]);
+    res.json(list.map(p => close.has(p._id)
+        ? {
+            username: p._id, state: p.state, instance: p.instance, mcVersion: p.mcVersion, loader: p.loader,
+            packId: p.packId, server: p.server, since: new Date(p.since).toISOString(), friend: p._id !== req.user.username,
+        }
+        : { username: p._id, state: p.state === 'playing' ? 'online' : p.state, instance: '', mcVersion: '', loader: '', packId: null, server: '', since: null, friend: false }));
 });
 
 // GET /users/me
