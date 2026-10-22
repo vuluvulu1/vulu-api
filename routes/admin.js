@@ -14,7 +14,8 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
 
-const toClient = r => ({ id: String(r._id), username: r.username, email: r.email, createdAt: r.createdAt });
+// emailVerified: alanı olmayan (e-posta doğrulamasından önceki) istekler doğrulanmış sayılır
+const toClient = r => ({ id: String(r._id), username: r.username, email: r.email, createdAt: r.createdAt, emailVerified: r.emailVerified !== false });
 
 // ── Veritabanı alanı ──────────────────────────────────────────────────
 // Atlas'ın ücretsiz kümesi 512 MB; başka bir plan kullanılıyorsa DB_LIMIT_MB ile değiştirilir
@@ -183,6 +184,8 @@ router.post('/registrations/:id/approve', async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'İstek bulunamadı.' });
     const reg = await Registration.findById(req.params.id);
     if (!reg) return res.status(404).json({ error: 'İstek bulunamadı. Başka bir admin işlem yapmış olabilir.' });
+    if (reg.emailVerified === false)
+        return res.status(409).json({ error: `${reg.username} e-posta adresini henüz doğrulamadı. Doğrulayınca onaylayabilirsin.` });
 
     // İstek beklerken aynı adla elle bir kullanıcı açılmış olabilir
     if (await User.exists({ username: new RegExp(`^${reg.username}$`, 'i') })) {
