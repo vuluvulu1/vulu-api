@@ -104,20 +104,17 @@ router.delete('/me/presence', requireAuth, async (req, res) => {
     res.json({ ok: true });
 });
 
-// GET /users/presence — çevrimiçi olanlar. Ne oynadığını (paket, sunucu, süre) yalnızca arkadaşlar görür;
-// arkadaş olmayanlar için yalnızca çevrimiçi olduğu bilinir.
+// GET /users/presence — çevrimiçi olanlar ve ne oynadıkları (herkes görür). friend: bakan kişinin arkadaşı mı
 router.get('/presence', requireAuth, async (req, res) => {
     const [list, friends] = await Promise.all([
         Presence.find({ at: { $gt: new Date(Date.now() - PRESENCE_TTL) } }).lean(),
         Friendship.friendsOf(req.user.username),
     ]);
-    const close = new Set([...friends, req.user.username]);
-    res.json(list.map(p => close.has(p._id)
-        ? {
-            username: p._id, state: p.state, instance: p.instance, mcVersion: p.mcVersion, loader: p.loader,
-            packId: p.packId, server: p.server, since: new Date(p.since).toISOString(), friend: p._id !== req.user.username,
-        }
-        : { username: p._id, state: p.state === 'playing' ? 'online' : p.state, instance: '', mcVersion: '', loader: '', packId: null, server: '', since: null, friend: false }));
+    const mine = new Set(friends);
+    res.json(list.map(p => ({
+        username: p._id, state: p.state, instance: p.instance, mcVersion: p.mcVersion, loader: p.loader,
+        packId: p.packId, server: p.server, since: new Date(p.since).toISOString(), friend: mine.has(p._id),
+    })));
 });
 
 // GET /users/me
