@@ -8,15 +8,18 @@ const { requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
-const GENERAL = 'general';          // pakete bağlı olmayan istekler
+const GENERAL = 'general';          // pakete bağlı olmayan paket istekleri
+const LAUNCHER = 'launcher';        // launcher'ın kendisi hakkında: hata ve öneri
+const KINDS = { packs: ['feedback', 'request'], launcher: ['bug', 'idea'] };
 const MAX_TEXT = 1000;
 const MAX_REPLY = 500;
 const POST_INTERVAL_MS = 15 * 1000; // aynı kullanıcı arka arkaya gönderemez
 const MAX_OPEN_PER_USER = 30;
 
-/** ?pack= değerini filtreye çevirir; geçersizse null. */
+/** ?pack= değerini filtreye çevirir; geçersizse null. (area alanı olmayan eski kayıtlar paketlere aittir.) */
 function packFilter(value) {
-    if (!value || value === GENERAL) return { pack: null };
+    if (value === LAUNCHER) return { pack: null, area: LAUNCHER };
+    if (!value || value === GENERAL) return { pack: null, area: { $ne: LAUNCHER } };
     if (!mongoose.isValidObjectId(value)) return null;
     return { pack: new mongoose.Types.ObjectId(String(value)) };
 }
@@ -24,8 +27,9 @@ function packFilter(value) {
 function toClient(item, user, avatars) {
     return {
         id: String(item._id),
-        pack: item.pack ? String(item.pack) : GENERAL,
+        pack: item.area === LAUNCHER ? LAUNCHER : item.pack ? String(item.pack) : GENERAL,
         kind: item.kind,
+        ...(user.isAdmin && item.meta ? { meta: { version: item.meta.version || '', platform: item.meta.platform || '' } } : {}),
         text: item.text,
         author: item.author,
         authorAvatarVersion: avatars.get(item.author) || 0,
@@ -51,10 +55,10 @@ router.get('/counts', requireAuth, async (req, res) => {
     const visible = (await Pack.find(visiblePacksQuery(req.user)).select('_id').lean()).map(p => p._id);
     const rows = await Feedback.aggregate([
         { $match: { status: 'open', $or: [{ pack: null }, { pack: { $in: visible } }] } },
-        { $group: { _id: '$pack', count: { $sum: 1 } } },
+        { $group: { _id: { pack: '$pack', launcher: { $eq: ['$area', LAUNCHER] } }, count: { $sum: 1 } } },
     ]);
     const counts = {};
-    for (const row of rows) counts[row._id ? String(row._id) : GENERAL] = row.count;
+    for (const row of rows) counts[row._id.launcher ? LAUNCHER : row._id.pack ? String(row._id.pack) : GENERAL] = row.count;
     res.json(counts);
 });
 
@@ -74,7 +78,8 @@ router.get('/', requireAuth, async (req, res) => {
 // POST /feedback { pack, kind, text }
 router.post('/', requireAuth, async (req, res) => {
     const text = String(req.body.text || '').trim();
-    const kind = req.body.kind === 'request' ? 'request' : 'feedback';
+    const area = req.body.pack === LAUNCHER ? LAUNCHER : 'packs';
+    const kind = KINDS[area].includes(req.body.kind) ? req.body.kind : KINDS[area][area === LAUNCHER ? 1 : 0];
     if (text.length < 3) return res.status(400).json({ error: 'Biraz daha yaz.' });
     if (text.length > MAX_TEXT) return res.status(400).json({ error: `En fazla ${MAX_TEXT} karakter yazabilirsin.` });
 
@@ -91,8 +96,10 @@ router.post('/', requireAuth, async (req, res) => {
     if (open >= MAX_OPEN_PER_USER)
         return res.status(429).json({ error: 'Çok fazla açık geri bildirimin var. Eskilerden bazılarını sil.' });
 
+    const short = v => (typeof v === 'string' ? v.trim().slice(0, 40) : '');
+    const meta = area === LAUNCHER && req.body.meta ? { version: short(req.body.meta.version), platform: short(req.body.meta.platform) } : undefined;
     const item = await Feedback.create({
-        pack: filter.pack, kind, text,
+        area, pack: filter.pack, kind, text, meta,
         author: req.user.username, authorId: req.user._id,
     });
     res.status(201).json(toClient(item.toObject(), req.user, new Map([[req.user.username, req.user.avatarVersion || 0]])));
