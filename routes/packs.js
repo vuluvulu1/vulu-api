@@ -242,11 +242,9 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     // Kimler erişebilir: rol kimlikleri; boş liste herkese açık demek. Verilmezse (ya da null) güncellemede eskisi kalır.
     let roles;
     if (body.roles !== undefined && body.roles !== null) {
-        if (!Array.isArray(body.roles) || body.roles.length > 50 || body.roles.some(r => !mongoose.isValidObjectId(r)))
-            return res.status(400).json({ error: 'Rol listesi geçersiz.' });
-        roles = [...new Set(body.roles.map(String))];
-        if (await Role.countDocuments({ _id: { $in: roles } }) !== roles.length)
-            return res.status(400).json({ error: 'Seçilen rollerden biri artık yok; listeyi yenileyip tekrar dene.' });
+        const checked = await cleanRoles(body.roles);
+        if (checked.error) return res.status(400).json({ error: checked.error });
+        roles = checked.roles;
     }
 
     const fields = {
@@ -290,6 +288,27 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     }
 
     const pack = await Pack.create({ ...fields, changelog: [{ revision: 1, at: new Date(), by: req.user.username, note, added: [], removed: [], updated: [] }] });
+    res.json(toClient(pack, req.user));
+});
+
+/** Rol kimliği listesini doğrular; hata mesajı ya da tekrarsız liste döner. */
+async function cleanRoles(value) {
+    if (!Array.isArray(value) || value.length > 50 || value.some(r => !mongoose.isValidObjectId(r)))
+        return { error: 'Rol listesi geçersiz.' };
+    const roles = [...new Set(value.map(String))];
+    if (await Role.countDocuments({ _id: { $in: roles } }) !== roles.length)
+        return { error: 'Seçilen rollerden biri artık yok; listeyi yenileyip tekrar dene.' };
+    return { roles };
+}
+
+// PUT /packs/:id/roles { roles }  (admin) — yalnızca kimlerin görebileceği değişir; yeni revizyon açılmaz
+router.put('/:id/roles', requireAuth, requireAdmin, async (req, res) => {
+    const pack = await findPack(req.params.id);
+    if (!pack) return res.status(404).json({ error: 'Paket bulunamadı.' });
+    const { roles, error } = await cleanRoles((req.body || {}).roles);
+    if (error) return res.status(400).json({ error });
+    pack.roles = roles;
+    await pack.save();
     res.json(toClient(pack, req.user));
 });
 
