@@ -42,7 +42,7 @@ router.post('/login', async (req, res) => {
         const pendingMatch = await bcrypt.compare(password, pending ? pending.passwordHash : DUMMY_HASH);
         if (pending && pendingMatch)
             return res.status(403).json({ error: pending.emailVerified === false
-                ? 'Önce e-posta adresini doğrula. Sana gönderdiğimiz bağlantıyı aç; ardından bir admin isteğini onaylayacak.'
+                ? 'Önce e-posta adresini doğrula; sana gönderdiğimiz bağlantıyı aç.'
                 : 'Kaydın henüz onaylanmadı. Bir admin onayladığında giriş yapabilirsin.' });
         failuresByName.hit(nameKey);
         return res.status(401).json({ error: WRONG });
