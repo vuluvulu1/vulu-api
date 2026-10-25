@@ -1,4 +1,6 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const mongoose = require('mongoose');
 const Song = require('../models/Song');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
@@ -6,17 +8,19 @@ const { requireAuth, requireAdmin } = require('../middleware/auth');
 /**
  * vulu Radyo: adminlerin yüklediği şarkılar. Üyeler listeyi ve dosyaları alır; launcher dosyayı bir kez indirip
  * kendi önbelleğinden çalar. Yalnızca hakları alınmış ya da telifsiz şarkılar yüklenmeli (admin panelinde yazar).
- * Dosya türü uzantıdan değil ilk baytlardan anlaşılır; toplam alan RADIO_CAP_MB ile sınırlıdır (dolunca yükleme reddedilir).
+ *
+ * Dosyalar veritabanına değil sunucu diskine yazılır: RADIO_DIR (ör. /srv/vulu-api/radio; her dağıtımda değişen
+ * uygulama klasörünün dışında olmalı). Ayarlı değilse yükleme açıkça reddedilir. Dosya türü uzantıdan değil ilk
+ * baytlardan anlaşılır; toplam alan RADIO_CAP_MB ile sınırlıdır (dolunca yükleme reddedilir).
  */
 const router = express.Router();
 router.use(requireAuth);
 
-const BUCKET = 'songfiles';
 const MAX_FILE = 30 * 1024 * 1024;
-const CAP_BYTES = () => (Number(process.env.RADIO_CAP_MB) || 1024) * 1024 * 1024;
+const CAP_BYTES = () => (Number(process.env.RADIO_CAP_MB) || 2048) * 1024 * 1024;
 const MAX_TEXT = 100;
-
-const bucket = () => new mongoose.mongo.GridFSBucket(mongoose.connection.db, { bucketName: BUCKET });
+const radioDir = () => process.env.RADIO_DIR || null;
+const fileOf = id => path.join(radioDir(), String(id));
 
 /** Ses dosyasının türü ilk baytlardan: MP3 (ID3 etiketi ya da çerçeve başı), OGG, M4A/AAC. */
 function sniffAudio(head) {
@@ -45,23 +49,26 @@ async function usedBytes() {
 // GET /radio/songs — şarkı listesi (en yeni önce) ve kullanılan alan
 router.get('/songs', async (req, res) => {
     const songs = await Song.find().sort({ createdAt: -1 }).lean();
-    res.json({ songs: songs.map(toClient), usedBytes: songs.reduce((n, s) => n + s.size, 0), capBytes: CAP_BYTES() });
+    res.json({ songs: songs.map(toClient), usedBytes: songs.reduce((n, s) => n + s.size, 0), capBytes: CAP_BYTES(), ready: !!radioDir() });
 });
 
 // GET /radio/songs/:id/file — ses dosyasının kendisi
 router.get('/songs/:id/file', async (req, res) => {
     const song = mongoose.isValidObjectId(req.params.id) ? await Song.findById(req.params.id).lean() : null;
-    if (!song) return res.status(404).json({ error: 'Şarkı bulunamadı.' });
-    res.set('Content-Type', song.contentType);
-    res.set('Content-Length', String(song.size));
-    res.set('Cache-Control', 'private, max-age=31536000, immutable');
-    bucket().openDownloadStream(song.fileId)
-        .on('error', () => { if (!res.headersSent) res.status(404); res.end(); })
-        .pipe(res);
+    if (!song || !radioDir()) return res.status(404).json({ error: 'Şarkı bulunamadı.' });
+    const stream = fs.createReadStream(fileOf(song._id));
+    stream.on('error', () => { if (!res.headersSent) res.status(404).json({ error: 'Şarkı dosyası bulunamadı.' }); else res.end(); });
+    stream.on('open', () => {
+        res.set('Content-Type', song.contentType);
+        res.set('Content-Length', String(song.size));
+        res.set('Cache-Control', 'private, max-age=31536000, immutable');
+        stream.pipe(res);
+    });
 });
 
 // POST /radio/songs?title=…&artist=… — gövde ses dosyasının kendisi (yalnızca admin)
 router.post('/songs', requireAdmin, async (req, res) => {
+    if (!radioDir()) return res.status(503).json({ error: 'Sunucuda şarkı klasörü ayarlı değil (RADIO_DIR).' });
     const title = cleanText(req.query.title);
     const artist = cleanText(req.query.artist);
     if (!title) return res.status(400).json({ error: 'Şarkının adı gerekli.' });
@@ -70,13 +77,19 @@ router.post('/songs', requireAdmin, async (req, res) => {
     if ((await usedBytes()) + declared > CAP_BYTES())
         return res.status(413).json({ error: 'vulu Radyo için ayrılan alan doldu; önce eski şarkılardan sil.' });
 
-    const upload = bucket().openUploadStream(`song-${Date.now()}`, { metadata: { uploadedBy: req.user.username } });
+    const id = new mongoose.Types.ObjectId();
+    const target = fileOf(id), part = target + '.part';
+    try { fs.mkdirSync(radioDir(), { recursive: true }); }
+    catch { return res.status(500).json({ error: 'Şarkı klasörü oluşturulamadı.' }); }
+    const out = fs.createWriteStream(part, { flags: 'wx' });
+
     let size = 0, head = Buffer.alloc(0), contentType = null, finished = false;
     const fail = (status, error) => {
         if (finished) return;
         finished = true;
-        req.unpipe(upload);
-        upload.abort().catch(() => { });
+        req.unpipe(out);
+        out.destroy();
+        fs.unlink(part, () => { });
         res.status(status).json({ error });
     };
 
@@ -91,20 +104,22 @@ router.post('/songs', requireAdmin, async (req, res) => {
         }
     });
     req.on('aborted', () => fail(400, 'Yükleme yarıda kaldı.'));
-    upload.on('error', () => fail(500, 'Şarkı kaydedilemedi.'));
-    upload.on('finish', async () => {
+    out.on('error', () => fail(500, 'Şarkı kaydedilemedi.'));
+    out.on('finish', async () => {
         if (finished) return;
         if (!contentType) return fail(415, 'Yalnızca MP3, OGG ya da M4A ses dosyası yüklenebilir.');
         finished = true;
         try {
-            const song = await Song.create({ title, artist, fileId: upload.id, contentType, size, uploadedBy: req.user.username });
+            fs.renameSync(part, target);
+            const song = await Song.create({ _id: id, title, artist, contentType, size, uploadedBy: req.user.username });
             res.status(201).json(toClient(song.toObject()));
-        } catch (err) {
-            bucket().delete(upload.id).catch(() => { });
+        } catch {
+            fs.unlink(part, () => { });
+            fs.unlink(target, () => { });
             res.status(500).json({ error: 'Şarkı kaydedilemedi.' });
         }
     });
-    req.pipe(upload);
+    req.pipe(out);
 });
 
 // PATCH /radio/songs/:id { title, artist } — yalnızca admin
@@ -125,8 +140,8 @@ router.patch('/songs/:id', requireAdmin, async (req, res) => {
 router.delete('/songs/:id', requireAdmin, async (req, res) => {
     const song = mongoose.isValidObjectId(req.params.id) ? await Song.findById(req.params.id).lean() : null;
     if (!song) return res.status(404).json({ error: 'Şarkı bulunamadı.' });
-    try { await bucket().delete(song.fileId); } catch { /* dosya zaten yok */ }
     await Song.deleteOne({ _id: song._id });
+    if (radioDir()) fs.unlink(fileOf(song._id), () => { /* dosya zaten yoksa sorun değil */ });
     res.json({ deleted: true });
 });
 
