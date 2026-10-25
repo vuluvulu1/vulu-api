@@ -73,6 +73,7 @@ app.use('/yggdrasil', require('./routes/yggdrasil').router);
 app.use('/stats', require('./routes/stats'));
 app.use('/curseforge', require('./routes/curseforge'));
 app.use('/download', require('./routes/download'));
+app.use('/radio', require('./routes/radio'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));
