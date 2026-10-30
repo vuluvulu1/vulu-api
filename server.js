@@ -46,7 +46,10 @@ app.use((req, res, next) => {
 });
 
 // Genel sınır: tek bir IP'nin sunucuyu boğmasına karşı (launcher normal kullanımda bunun çok altında kalır)
-app.use(limitByIp({ windowMs: 60 * 1000, max: 240, message: 'Çok fazla istek. Biraz bekleyip tekrar dene.' }));
+// Paket dosyaları ayrı sayılır: bir paket kurulurken yüzlerce dosya art arda iner
+const generalLimit = limitByIp({ windowMs: 60 * 1000, max: 240, message: 'Çok fazla istek. Biraz bekleyip tekrar dene.' });
+const blobLimit = limitByIp({ windowMs: 60 * 1000, max: 3000, message: 'Çok fazla indirme isteği. Biraz bekleyip tekrar dene.' });
+app.use((req, res, next) => (req.path.startsWith('/packs/blob/') ? blobLimit : generalLimit)(req, res, next));
 
 // MongoDB bağlantısı
 mongoose.connect(process.env.MONGO_URI)
@@ -55,6 +58,8 @@ mongoose.connect(process.env.MONGO_URI)
         // Eski sürümlerden kalan paket izinleri (allowedPacks) temizlenir; eşleşen kayıt kalmayınca iş yapmaz
         try { await mongoose.connection.db.collection('users').updateMany({ allowedPacks: { $exists: true } }, { $unset: { allowedPacks: '' } }); }
         catch (err) { console.error('Eski alanlar temizlenemedi:', err.message); }
+        // Aynada eksik kalan paket dosyaları (ayna yeni açıldıysa ya da önceki indirme yarım kaldıysa) tamamlanır
+        require('./routes/packs').syncMirror();
     })
     .catch(err => console.error('MongoDB bağlantı hatası:', err));
 

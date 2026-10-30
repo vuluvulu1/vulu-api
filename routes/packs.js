@@ -6,6 +6,7 @@ const Role = require('../models/Role');
 const { canSeePack, visiblePacksQuery } = require('../lib/access');
 const { requireAuth, requireAdmin, requirePackReader } = require('../middleware/auth');
 const { squareLogo } = require('../lib/squareLogo');
+const packMirror = require('../lib/packMirror');
 
 const router = express.Router();
 
@@ -57,7 +58,8 @@ function toClient(pack, user) {
         revision: pack.revision,
         createdAt: pack.createdAt,
         updatedAt: pack.updatedAt,
-        mods: pack.mods || [],
+        // mirrored: dosyanın kopyası sunucuda var; launcher önce /packs/blob/<sha1>'den indirir
+        mods: (pack.mods || []).map(m => ({ ...(typeof m.toObject === 'function' ? m.toObject() : m), mirrored: packMirror.has(m.sha1) })),
         includes: pack.includes || [],
         overridesSize: pack.overridesSize || 0,
         hasCover: !!pack.coverFileId,
@@ -89,6 +91,20 @@ function streamFile(res, fileId, contentType, cacheable) {
         .on('error', () => { if (!res.headersSent) res.status(404); res.end(); })
         .pipe(res);
 }
+
+/** Bütün paketlerin dosyalarını aynalar (arka planda; yayın ve silme beklemez). */
+function syncMirror() {
+    packMirror.sync(() => Pack.find({}, { mods: 1 }).lean(), MOD_HOSTS);
+}
+
+// GET /packs/blob/:sha1 — paket dosyasının sunucudaki kopyası (dosya içeriği hash'iyle sabit, önbelleğe alınabilir)
+router.get('/blob/:sha1', requirePackReader, (req, res) => {
+    const file = packMirror.blobPath(req.params.sha1);
+    if (!file) return res.status(404).json({ error: 'Dosya bulunamadı.' });
+    res.sendFile(file, { maxAge: '7d', immutable: true, headers: { 'Content-Type': 'application/octet-stream' } }, err => {
+        if (err && !res.headersSent) res.status(404).json({ error: 'Dosya bulunamadı.' });
+    });
+});
 
 // GET /packs — kullanıcının rolleriyle görebildiği paketler
 router.get('/', requirePackReader, async (req, res) => {
@@ -284,10 +300,12 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         await deleteFile(oldOverrides);
         await deleteFile(oldCover);
         await deleteFile(oldLogo);
+        syncMirror();
         return res.json(toClient(pack, req.user));
     }
 
     const pack = await Pack.create({ ...fields, changelog: [{ revision: 1, at: new Date(), by: req.user.username, note, added: [], removed: [], updated: [] }] });
+    syncMirror();
     res.json(toClient(pack, req.user));
 });
 
@@ -321,7 +339,9 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     await deleteFile(pack.overridesFileId);
     await deleteFile(pack.coverFileId);
     await deleteFile(pack.logoFileId);
+    syncMirror();
     res.json({ success: true });
 });
 
 module.exports = router;
+module.exports.syncMirror = syncMirror;
