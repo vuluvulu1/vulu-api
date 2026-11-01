@@ -11,8 +11,8 @@ const packMirror = require('../lib/packMirror');
 const router = express.Router();
 
 const BUCKET = 'packfiles';
-const LIMITS = { overrides: 200 * 1024 * 1024, cover: 8 * 1024 * 1024, logo: 4 * 1024 * 1024 };
-const LIMIT_ERRORS = { overrides: 'Paket dosyaları 200 MB\'ı aşıyor.', cover: 'Kapak 8 MB\'tan büyük olamaz.', logo: 'Logo 4 MB\'tan büyük olamaz.' };
+const LIMITS = { overrides: 200 * 1024 * 1024, cover: 8 * 1024 * 1024, logo: 4 * 1024 * 1024, icon: 4 * 1024 * 1024 };
+const LIMIT_ERRORS = { overrides: 'Paket dosyaları 200 MB\'ı aşıyor.', cover: 'Kapak 8 MB\'tan büyük olamaz.', logo: 'Logo 4 MB\'tan büyük olamaz.', icon: 'Simge 4 MB\'tan büyük olamaz.' };
 const IMAGE_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' };
 const COVER_EXTS = ['.png', '.jpg', '.jpeg', '.webp'];
 const LOADERS = ['vanilla', 'fabric', 'quilt', 'forge', 'neoforge'];
@@ -66,6 +66,9 @@ function toClient(pack, user) {
         coverExt: pack.coverExt || null,
         hasLogo: !!pack.logoFileId,
         logoExt: pack.logoExt || null,
+        hasIcon: !!pack.iconFileId,
+        iconExt: pack.iconExt || null,
+        backgroundAsIcon: pack.backgroundAsIcon ?? null,
         changelog: (pack.changelog || []).map(c => ({
             revision: c.revision, at: c.at, by: c.by, note: c.note || '',
             added: c.added || [], removed: c.removed || [], updated: c.updated || [], filesChanged: !!c.filesChanged,
@@ -141,6 +144,13 @@ router.get('/:id/logo', async (req, res) => {
     streamFile(res, pack.logoFileId, IMAGE_TYPES[pack.logoExt] || 'image/png', true);
 });
 
+// GET /packs/:id/icon?v=<revision>
+router.get('/:id/icon', async (req, res) => {
+    const pack = await findPack(req.params.id);
+    if (!pack || !pack.iconFileId) return res.status(404).end();
+    streamFile(res, pack.iconFileId, IMAGE_TYPES[pack.iconExt] || 'image/png', true);
+});
+
 // GET /packs/:id/logo/square?v=<revision> — logo şeffaf kare zeminin ortasında (Discord durumu için).
 // Sonuç dosya kimliğine göre bellekte tutulur; logo PNG değilse olduğu gibi döner.
 const squareCache = new Map();
@@ -167,7 +177,7 @@ router.get('/:id/logo/square', async (req, res) => {
 });
 
 /**
- * POST /packs/files?kind=overrides|cover|logo  (admin)
+ * POST /packs/files?kind=overrides|cover|logo|icon  (admin)
  * Gövde dosyanın kendisidir; belleğe alınmadan doğrudan GridFS'e akıtılır.
  * Dönen fileId, POST /packs ile paket yayınlanırken kullanılır.
  */
@@ -255,6 +265,14 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     }
     const clearLogo = !logo && body.clearLogo === true;
 
+    // Simge: logoyla aynı kurallar
+    let icon = null;
+    if (body.iconFileId) {
+        icon = await ownedUpload(body.iconFileId, 'icon', req.user.username);
+        if (!icon || !COVER_EXTS.includes(body.iconExt)) return res.status(400).json({ error: 'Simge resmi geçersiz.' });
+    }
+    const clearIcon = !icon && body.clearIcon === true;
+
     // Kimler erişebilir: rol kimlikleri; boş liste herkese açık demek. Verilmezse (ya da null) güncellemede eskisi kalır.
     let roles;
     if (body.roles !== undefined && body.roles !== null) {
@@ -279,6 +297,9 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
     if (cover) { fields.coverFileId = cover._id; fields.coverExt = body.coverExt; }
     if (logo) { fields.logoFileId = logo._id; fields.logoExt = body.logoExt; }
     if (clearLogo) { fields.logoFileId = null; fields.logoExt = null; }
+    if (icon) { fields.iconFileId = icon._id; fields.iconExt = body.iconExt; }
+    if (clearIcon) { fields.iconFileId = null; fields.iconExt = null; }
+    if (typeof body.backgroundAsIcon === 'boolean') fields.backgroundAsIcon = body.backgroundAsIcon;
     if (roles) fields.roles = roles;
 
     if (body.id) {
@@ -288,6 +309,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         const oldOverrides = pack.overridesFileId;
         const oldCover = cover ? pack.coverFileId : null;
         const oldLogo = logo || clearLogo ? pack.logoFileId : null;
+        const oldIcon = icon || clearIcon ? pack.iconFileId : null;
         const change = {
             revision: pack.revision + 1, at: new Date(), by: req.user.username, note,
             ...diffMods(pack.mods, fields.mods),
@@ -300,6 +322,7 @@ router.post('/', requireAuth, requireAdmin, async (req, res) => {
         await deleteFile(oldOverrides);
         await deleteFile(oldCover);
         await deleteFile(oldLogo);
+        await deleteFile(oldIcon);
         syncMirror();
         return res.json(toClient(pack, req.user));
     }
@@ -339,6 +362,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
     await deleteFile(pack.overridesFileId);
     await deleteFile(pack.coverFileId);
     await deleteFile(pack.logoFileId);
+    await deleteFile(pack.iconFileId);
     syncMirror();
     res.json({ success: true });
 });

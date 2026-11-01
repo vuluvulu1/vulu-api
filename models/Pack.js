@@ -50,6 +50,11 @@ const packSchema = new mongoose.Schema({
     // Ana ekranda paket adının yerine gösterilen logo (isteğe bağlı)
     logoFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
     logoExt: { type: String, default: null },
+    // Kurulum listesindeki küçük karede görünen simge (isteğe bağlı)
+    iconFileId: { type: mongoose.Schema.Types.ObjectId, default: null },
+    iconExt: { type: String, default: null },
+    // Simge yoksa kapak küçük karede gösterilsin mi; null: bu seçenek gelmeden önce yayınlanmış paket
+    backgroundAsIcon: { type: Boolean, default: null },
     changelog: { type: [changeSchema], default: [] },
     // Paketi görebilecek roller; boşsa herkese açık (bkz. lib/access.js)
     roles: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }], default: [] },
