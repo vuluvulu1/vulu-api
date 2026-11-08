@@ -10,6 +10,8 @@ const GameSession = require('../models/GameSession');
 const PanelToken = require('../models/PanelToken');
 const Presence = require('../models/Presence');
 const Friendship = require('../models/Friendship');
+const Registration = require('../models/Registration');
+const { mailEnabled, sendMail, emailChangeMail } = require('../lib/mail');
 const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
 const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash } = require('../middleware/auth');
@@ -117,10 +119,44 @@ router.get('/presence', requireAuth, async (req, res) => {
     })));
 });
 
-// GET /users/me
+// GET /users/me — kendi profilin; e-posta (ve doğrulanmayı bekleyen yeni adres) yalnızca burada görünür
 router.get('/me', requireAuth, async (req, res) => {
     const [counts, roles] = await Promise.all([packCounts(req.user), roleMap()]);
-    res.json(publicProfile(req.user, counts[req.user.username] || 0, roles));
+    const pending = req.user.pendingEmail && req.user.emailTokenExpires > new Date() ? req.user.pendingEmail : null;
+    res.json({ ...publicProfile(req.user, counts[req.user.username] || 0, roles), email: req.user.email || '', pendingEmail: pending });
+});
+
+// POST /users/me/email { email, password } — e-posta adresini değiştirir. E-posta gönderimi kuruluysa yeni adres
+// postadaki bağlantı açılınca geçerli olur (yanlış yazılan adres hesabı kilitlemesin); kurulu değilse hemen değişir.
+const EMAIL_CHANGE_TTL_MS = 48 * 60 * 60 * 1000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+router.post('/me/email', requireAuth, async (req, res) => {
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (email.length > 254 || !EMAIL_RE.test(email)) return res.status(400).json({ error: 'Geçerli bir e-posta adresi gir.' });
+    if (!password || !(await bcrypt.compare(password, req.user.passwordHash)))
+        return res.status(401).json({ error: 'Şifre hatalı.' });
+    if ((req.user.email || '') === email) return res.status(400).json({ error: 'Hesabının adresi zaten bu.' });
+    if (await User.exists({ email, _id: { $ne: req.user._id } }) || await Registration.exists({ email }))
+        return res.status(409).json({ error: 'Bu e-posta adresi başka bir hesapta ya da kayıt isteğinde kullanılıyor.' });
+
+    if (!mailEnabled()) {
+        await User.updateOne({ _id: req.user._id }, { $set: { email }, $unset: { pendingEmail: '', emailTokenHash: '', emailTokenExpires: '' } });
+        return res.json({ success: true, pending: false, email, message: 'E-posta adresin değişti.' });
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    await User.updateOne({ _id: req.user._id }, { $set: {
+        pendingEmail: email,
+        emailTokenHash: crypto.createHash('sha256').update(token).digest('hex'),
+        emailTokenExpires: new Date(Date.now() + EMAIL_CHANGE_TTL_MS),
+    } });
+    try {
+        await sendMail({ to: email, ...emailChangeMail(req.user.username, token) });
+    } catch (err) {
+        console.error('E-posta değişikliği postası:', err.message);
+        return res.status(502).json({ error: 'Doğrulama e-postası gönderilemedi. Biraz sonra tekrar dene.' });
+    }
+    res.json({ success: true, pending: true, email, message: `${email} adresine bir doğrulama bağlantısı gönderdik. Bağlantıyı açınca adresin değişecek.` });
 });
 
 // PUT /users/me — açıklama

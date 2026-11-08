@@ -137,16 +137,66 @@ router.post('/register', async (req, res) => {
     res.status(201).json({ success: true, verifyEmail: true });
 });
 
-// POST /auth/verify-email { token } — e-postadaki bağlantı (sitedeki /dogrula sayfası) bunu çağırır
+// POST /auth/verify-email { token } — e-postadaki bağlantı (sitedeki /dogrula sayfası) bunu çağırır.
+// Kayıt doğrulaması ya da hesabın e-posta değişikliği olabilir; cevaptaki kind hangisi olduğunu söyler.
 router.post('/verify-email', async (req, res) => {
     const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
     if (!token || token.length > 100) return res.status(400).json({ error: 'Bağlantı geçersiz.' });
+    const hash = verifyHash(token);
     const reg = await Registration.findOneAndUpdate(
-        { verifyTokenHash: verifyHash(token), expireAt: { $gt: new Date() } },
+        { verifyTokenHash: hash, expireAt: { $gt: new Date() } },
         { $set: { emailVerified: true }, $unset: { verifyTokenHash: '', expireAt: '' } },
         { returnDocument: 'after' }).select('username').lean();
-    if (!reg) return res.status(400).json({ error: 'Bağlantı geçersiz ya da süresi dolmuş. Katılma isteğini yeniden gönderebilirsin.' });
-    res.json({ success: true, username: reg.username });
+    if (reg) return res.json({ success: true, username: reg.username, kind: 'registration' });
+
+    const user = await User.findOne({ emailTokenHash: hash, emailTokenExpires: { $gt: new Date() } }).select('username pendingEmail').lean();
+    if (user && user.pendingEmail) {
+        // Bağlantı bekletilirken adres başka bir hesaba geçmiş olabilir
+        if (await User.exists({ email: user.pendingEmail, _id: { $ne: user._id } }))
+            return res.status(409).json({ error: 'Bu e-posta adresi artık başka bir hesapta kullanılıyor.' });
+        await User.updateOne({ _id: user._id }, {
+            $set: { email: user.pendingEmail },
+            $unset: { pendingEmail: '', emailTokenHash: '', emailTokenExpires: '' },
+        });
+        return res.json({ success: true, username: user.username, kind: 'email-change', email: user.pendingEmail });
+    }
+    res.status(400).json({ error: 'Bağlantı geçersiz ya da süresi dolmuş. İsteği yeniden gönderebilirsin.' });
+});
+
+// POST /auth/registration/email { username, password, email } — kayıt formunda e-posta yanlış yazıldıysa adresi
+// düzeltir ve yeni adrese doğrulama bağlantısı gönderir. Kaydın şifresiyle yapılır; kayıt yoksa ya da şifre
+// tutmazsa aynı cevap döner (hangi adların beklediği öğrenilemesin).
+router.post('/registration/email', async (req, res) => {
+    const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!username || !password || username.length > 32 || password.length > 200)
+        return res.status(400).json({ error: 'Kullanıcı adı ve şifre gerekli.' });
+    if (email.length > 254 || !EMAIL.test(email)) return res.status(400).json({ error: 'Geçerli bir e-posta adresi gir.' });
+    if (resendsByIp.hit(req.ip || 'unknown')) return res.status(429).json({ error: 'Çok fazla deneme. Biraz sonra tekrar dene.' });
+
+    const reg = await Registration.findOne({ username });
+    const match = await bcrypt.compare(password, reg ? reg.passwordHash : DUMMY_HASH);
+    if (!reg || !match) return res.status(401).json({ error: 'Bu kullanıcı adı ve şifreyle bekleyen bir kayıt bulunamadı.' });
+    if (reg.email === email) return res.status(400).json({ error: 'Kayıtlı adres zaten bu.' });
+    if (await User.exists({ email }) || await Registration.exists({ email, _id: { $ne: reg._id } }))
+        return res.status(409).json({ error: 'Bu e-posta adresiyle zaten bir hesap ya da kayıt isteği var.' });
+
+    reg.email = email;
+    if (!mailEnabled()) {
+        await reg.save();
+        return res.json({ success: true, verifyEmail: false, message: 'E-posta adresin güncellendi.' });
+    }
+    // Yeni adres doğrulanana kadar istek onaya düşmez
+    reg.emailVerified = false;
+    await reg.save();
+    try {
+        await sendVerification(reg);
+    } catch (err) {
+        console.error('Doğrulama postası (adres düzeltme):', err.message);
+        return res.status(502).json({ error: 'Adres güncellendi ama doğrulama e-postası gönderilemedi. Biraz sonra "yeniden gönder"i dene.' });
+    }
+    res.json({ success: true, verifyEmail: true, message: `${email} adresine yeni bir doğrulama bağlantısı gönderdik.` });
 });
 
 // POST /auth/resend-verification { email } — doğrulama postası gelmediyse. Adresin kayıtlı olup olmadığını

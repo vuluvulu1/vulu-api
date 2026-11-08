@@ -4,6 +4,10 @@ const userSchema = new mongoose.Schema({
     username: { type: String, required: true, unique: true },
     passwordHash: { type: String, required: true },
     email: { type: String, default: '' }, // kayıt ekranından gelenlerde dolu; eski hesaplarda boş
+    // E-posta değişikliği: yeni adres, postadaki bağlantı açılana kadar burada bekler (token'ın SHA-256'sı saklanır)
+    pendingEmail: { type: String },
+    emailTokenHash: { type: String },
+    emailTokenExpires: { type: Date },
     isActive: { type: Boolean, default: true },
     isAdmin: { type: Boolean, default: false },
     roles: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }], default: [] },
