@@ -12,6 +12,8 @@ const MessageKey = require('../models/MessageKey');
 const Role = require('../models/Role');
 const Pack = require('../models/Pack');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
+const settings = require('../lib/settings');
+const { createUserFromRegistration } = require('../lib/registrations');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -263,21 +265,23 @@ router.post('/registrations/:id/approve', async (req, res) => {
     if (reg.emailVerified === false)
         return res.status(409).json({ error: `${reg.username} e-posta adresini henüz doğrulamadı. Doğrulayınca onaylayabilirsin.` });
 
-    // İstek beklerken aynı adla elle bir kullanıcı açılmış olabilir
-    if (await User.exists({ username: new RegExp(`^${reg.username}$`, 'i') })) {
-        await Registration.deleteOne({ _id: reg._id });
-        return res.status(409).json({ error: `"${reg.username}" adında bir kullanıcı zaten var; istek kaldırıldı.` });
-    }
-
-    const user = await User.create({
-        username: reg.username,
-        email: reg.email,
-        passwordHash: reg.passwordHash,
-        isActive: true,
-        isAdmin: false,
-    });
-    await Registration.deleteOne({ _id: reg._id });
+    const { user, error } = await createUserFromRegistration(reg);
+    if (error) return res.status(409).json({ error });
     res.json({ success: true, username: user.username });
+});
+
+// GET /admin/settings — genel ayarlar (kayıt onayı vb.)
+router.get('/settings', async (req, res) => {
+    res.json(await settings.all());
+});
+
+// PUT /admin/settings { registrationApproval?: 'auto' | 'admin', requireMinecraftOwnership?: boolean }
+router.put('/settings', async (req, res) => {
+    try {
+        res.json(await settings.update(req.body || {}));
+    } catch (err) {
+        res.status(err.status || 500).json({ error: err.message });
+    }
 });
 
 // POST /admin/registrations/:id/reject — isteği siler

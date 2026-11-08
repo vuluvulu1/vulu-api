@@ -16,6 +16,9 @@ const modSchema = new mongoose.Schema({
     sha1: String,
     sha512: String,
     size: Number,
+    // Yapımcısı başka uygulamalardan indirmeye izin vermeyen CurseForge dosyası: url CurseForge'daki indirme
+    // sayfasıdır, launcher kişiye elle indirtir. Dosyanın kendisi ne pakete gömülür ne aynalanır.
+    manual: Boolean,
 }, { _id: false });
 
 // Bir revizyonda neyin değiştiği: mod listesi farkı sunucuda hesaplanır, not admin'den gelir

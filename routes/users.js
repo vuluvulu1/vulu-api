@@ -16,6 +16,7 @@ const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
 const { requireAuth, requirePackReader, signToken, PANEL_PREFIX, panelTokenHash } = require('../middleware/auth');
 const { visiblePacksQuery, roleMap, rolesOf } = require('../lib/access');
+const settings = require('../lib/settings');
 
 const router = express.Router();
 
@@ -123,7 +124,43 @@ router.get('/presence', requireAuth, async (req, res) => {
 router.get('/me', requireAuth, async (req, res) => {
     const [counts, roles] = await Promise.all([packCounts(req.user), roleMap()]);
     const pending = req.user.pendingEmail && req.user.emailTokenExpires > new Date() ? req.user.pendingEmail : null;
-    res.json({ ...publicProfile(req.user, counts[req.user.username] || 0, roles), email: req.user.email || '', pendingEmail: pending });
+    const mc = req.user.minecraft?.uuid ? { uuid: req.user.minecraft.uuid, name: req.user.minecraft.name, verifiedAt: req.user.minecraft.verifiedAt } : null;
+    res.json({ ...publicProfile(req.user, counts[req.user.username] || 0, roles), email: req.user.email || '', pendingEmail: pending,
+        minecraft: mc, ownershipRequired: await settings.get('requireMinecraftOwnership') });
+});
+
+// POST /users/me/minecraft { accessToken } — Microsoft hesabını bağlar. Launcher'ın Microsoft girişinden aldığı
+// Minecraft token'ıyla sunucu Minecraft servislerine profili sorar: profil varsa kişi oyuna sahiptir. Token saklanmaz.
+const UUID_RE = /^[0-9a-f]{32}$/;
+router.post('/me/minecraft', requireAuth, async (req, res) => {
+    const accessToken = typeof req.body?.accessToken === 'string' ? req.body.accessToken.trim() : '';
+    if (!accessToken || accessToken.length > 4096) return res.status(400).json({ error: 'Microsoft oturumu eksik.' });
+    let profile;
+    try {
+        const response = await fetch('https://api.minecraftservices.com/minecraft/profile', {
+            headers: { Authorization: `Bearer ${accessToken}` }, signal: AbortSignal.timeout(15 * 1000) });
+        if (response.status === 404) return res.status(403).json({ error: 'Bu Microsoft hesabında Minecraft: Java Edition yok.' });
+        if (response.status === 401) return res.status(401).json({ error: 'Microsoft oturumunun süresi dolmuş; tekrar giriş yap.' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        profile = await response.json();
+    } catch (err) {
+        console.error('Minecraft profili:', err.message);
+        return res.status(502).json({ error: 'Minecraft servislerine ulaşılamadı. Biraz sonra tekrar dene.' });
+    }
+    const uuid = String(profile?.id || '').toLowerCase();
+    const name = String(profile?.name || '');
+    if (!UUID_RE.test(uuid) || !name) return res.status(502).json({ error: 'Minecraft servisleri beklenmedik bir cevap verdi.' });
+    if (await User.exists({ 'minecraft.uuid': uuid, _id: { $ne: req.user._id } }))
+        return res.status(409).json({ error: `${name} adlı Minecraft hesabı başka bir vulu hesabına bağlı.` });
+    const minecraft = { uuid, name, verifiedAt: new Date() };
+    await User.updateOne({ _id: req.user._id }, { $set: { minecraft } });
+    res.json({ success: true, minecraft });
+});
+
+// DELETE /users/me/minecraft — bağlantıyı kaldırır
+router.delete('/me/minecraft', requireAuth, async (req, res) => {
+    await User.updateOne({ _id: req.user._id }, { $unset: { minecraft: '' } });
+    res.json({ success: true });
 });
 
 // POST /users/me/email { email, password } — e-posta adresini değiştirir. E-posta gönderimi kuruluysa yeni adres
@@ -294,6 +331,9 @@ router.delete('/me/skin', requireAuth, async (req, res) => {
 
 // POST /users/me/game-session — launcher oyunu başlatırken alır; oyun LAN'a/sunucuya katılırken bununla doğrulanır
 router.post('/me/game-session', requireAuth, async (req, res) => {
+    // Halka açık sunucuda oyun yalnızca Minecraft'a sahip olduğu doğrulanmış hesaplarla açılır
+    if (await settings.get('requireMinecraftOwnership') && !req.user.minecraft?.uuid)
+        return res.status(403).json({ error: 'Oynamak için önce Microsoft hesabını bağla (Ayarlar → Hesap).', code: 'ownership-required' });
     const accessToken = crypto.randomBytes(32).toString('hex');
     const profileId = offlineUuid(req.user.username);
     await GameSession.create({ tokenHash: tokenHash(accessToken), username: req.user.username, profileId });

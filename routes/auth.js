@@ -8,6 +8,8 @@ const Version = require('../models/Version');
 const { createCounter } = require('../middleware/rateLimit');
 const { signToken } = require('../middleware/auth');
 const { mailEnabled, sendMail, verificationMail } = require('../lib/mail');
+const settings = require('../lib/settings');
+const { createUserFromRegistration } = require('../lib/registrations');
 
 const router = express.Router();
 
@@ -69,11 +71,12 @@ router.post('/login', async (req, res) => {
     });
 });
 
-// POST /auth/register { username, email, password } — kayıt isteği; bir admin onaylayınca hesap açılır.
+// POST /auth/register { username, email, password } — kayıt isteği. Ayar 'auto' ise e-posta doğrulanınca hesap
+// kendiliğinden açılır; 'admin' ise (ya da posta gönderilemiyorsa) bir admin onaylar.
 // (Eskiden gizli anahtarla hesap açan /auth/create-user vardı; yerini bu ve admin onayı aldı.)
 const USERNAME = /^[A-Za-z0-9_]{3,16}$/;   // Minecraft çevrimdışı oturumunun kabul ettiği karakterler
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MAX_PENDING = 50;                   // toplam bekleyen istek
+const MAX_PENDING = 300;                  // toplam bekleyen istek (doğrulanmayanlar 48 saatte silinir)
 const MAX_PER_IP_PER_DAY = 3;
 
 const sameName = name => new RegExp(`^${name}$`, 'i'); // ad yalnızca harf/rakam/_ içerdiği için güvenli
@@ -123,7 +126,7 @@ router.post('/register', async (req, res) => {
     // E-posta gönderimi kurulu değilse (ör. eski sunucu) istek doğrudan admin onayına düşer
     if (!mailEnabled()) {
         await Registration.create({ username, email, passwordHash, ip });
-        return res.status(201).json({ success: true, verifyEmail: false });
+        return res.status(201).json({ success: true, verifyEmail: false, autoApprove: false });
     }
 
     const reg = await Registration.create({ username, email, passwordHash, ip, emailVerified: false });
@@ -134,7 +137,7 @@ router.post('/register', async (req, res) => {
         await Registration.deleteOne({ _id: reg._id });
         return res.status(502).json({ error: 'Doğrulama e-postası gönderilemedi. Biraz sonra tekrar dene.' });
     }
-    res.status(201).json({ success: true, verifyEmail: true });
+    res.status(201).json({ success: true, verifyEmail: true, autoApprove: await settings.get('registrationApproval') === 'auto' });
 });
 
 // POST /auth/verify-email { token } — e-postadaki bağlantı (sitedeki /dogrula sayfası) bunu çağırır.
@@ -146,8 +149,16 @@ router.post('/verify-email', async (req, res) => {
     const reg = await Registration.findOneAndUpdate(
         { verifyTokenHash: hash, expireAt: { $gt: new Date() } },
         { $set: { emailVerified: true }, $unset: { verifyTokenHash: '', expireAt: '' } },
-        { returnDocument: 'after' }).select('username').lean();
-    if (reg) return res.json({ success: true, username: reg.username, kind: 'registration' });
+        { returnDocument: 'after' });
+    if (reg) {
+        // Halka açık kayıt: doğrulanan istek hemen hesaba çevrilir
+        if (await settings.get('registrationApproval') === 'auto') {
+            const { user, error } = await createUserFromRegistration(reg);
+            if (error) return res.status(409).json({ error });
+            return res.json({ success: true, username: user.username, kind: 'registration', approved: true });
+        }
+        return res.json({ success: true, username: reg.username, kind: 'registration', approved: false });
+    }
 
     const user = await User.findOne({ emailTokenHash: hash, emailTokenExpires: { $gt: new Date() } }).select('username pendingEmail').lean();
     if (user && user.pendingEmail) {
@@ -219,6 +230,12 @@ router.post('/resend-verification', async (req, res) => {
         return res.status(502).json({ error: 'E-posta gönderilemedi. Biraz sonra tekrar dene.' });
     }
     res.json(ok);
+});
+
+// GET /auth/microsoft — launcher'ın Microsoft girişi için kullandığı Azure uygulama kimliği (gizli değildir).
+// MS_CLIENT_ID ayarlı değilse Microsoft girişi kapalıdır; launcher'ı yeniden yayınlamadan açılabilsin diye buradadır.
+router.get('/microsoft', async (req, res) => {
+    res.json({ clientId: process.env.MS_CLIENT_ID || null, ownershipRequired: await settings.get('requireMinecraftOwnership') });
 });
 
 // GET /auth/version

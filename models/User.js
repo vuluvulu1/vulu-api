@@ -5,6 +5,12 @@ const userSchema = new mongoose.Schema({
     passwordHash: { type: String, required: true },
     email: { type: String, default: '' }, // kayıt ekranından gelenlerde dolu; eski hesaplarda boş
     // E-posta değişikliği: yeni adres, postadaki bağlantı açılana kadar burada bekler (token'ın SHA-256'sı saklanır)
+    // Bağlı Microsoft hesabının Minecraft profili: sahiplik sunucuda Minecraft servislerine sorularak doğrulanır
+    minecraft: {
+        uuid: { type: String, index: true },
+        name: { type: String },
+        verifiedAt: { type: Date },
+    },
     pendingEmail: { type: String },
     emailTokenHash: { type: String },
     emailTokenExpires: { type: Date },
