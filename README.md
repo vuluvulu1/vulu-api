@@ -19,7 +19,9 @@ Telefon uygulaması girişten sonra Firebase Cloud Messaging token'ını `POST /
 bildirim olur; bir admin onaylayınca ya da reddedince öbürlerinin bildirimi kalkar. Adminler `PUT /users/me/notifications
 { registrations: false }` ile kapatabilir.
 
-Göndermek için `.env`'e Firebase projesinin servis hesabı eklenir (Firebase Console → Proje ayarları → Hizmet hesapları →
+Göndermek için Firebase projesinin servis hesabı gerekir. En kolayı: JSON'un içeriğini GitHub'da bu reponun
+**Settings → Secrets and variables → Actions** sayfasına `FCM_SERVICE_ACCOUNT` adıyla kaydetmek; deploy her sürüme
+`firebase-service-account.json` olarak ekler. Ya da sunucuda `.env`'e eklenir (Firebase Console → Proje ayarları → Hizmet hesapları →
 Yeni özel anahtar oluştur):
 
 ```

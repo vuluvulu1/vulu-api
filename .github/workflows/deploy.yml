@@ -1,6 +1,7 @@
 # main'e her push'ta API'yi VDS'e yükler. Deploy anahtarı sunucuda yalnızca /usr/local/bin/vulu-api-deploy'u
 # çalıştırabilir: kaynağı yeni sürüm klasörüne açar, npm ci yapar, servisi yeniden başlatır; /ping cevap vermezse
-# önceki sürüme döner. Gizli değerler (.env) sunucuda durur, repoda değil.
+# önceki sürüme döner. Gizli değerler (.env) sunucuda durur, repoda değil; Firebase servis hesabı GitHub sırrından
+# sürüme eklenir.
 name: Deploy
 
 on:
@@ -25,8 +26,19 @@ jobs:
           SSH_KEY: ${{ secrets.VDS_SSH_KEY }}
           KNOWN_HOSTS: ${{ secrets.VDS_KNOWN_HOSTS }}
           HOST: ${{ secrets.VDS_HOST }}
+          # Push bildirimleri için Firebase servis hesabı (JSON). Repoda değil, sırda durur; varsa sürümün içine
+          # firebase-service-account.json olarak konur ve lib/push.js onu okur.
+          FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
         run: |
           install -m 700 -d ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          git archive --format=tar.gz HEAD | ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "deploy@$HOST"
+          git archive --format=tar HEAD > release.tar
+          if [ -n "$FCM_SERVICE_ACCOUNT" ]; then
+            ( umask 077; printf '%s' "$FCM_SERVICE_ACCOUNT" > firebase-service-account.json )
+            node -e "const j=JSON.parse(require('fs').readFileSync('firebase-service-account.json','utf8')); if(!j.client_email||!j.private_key||!j.project_id) process.exit(1)" \
+              || { echo "::error::FCM_SERVICE_ACCOUNT geçerli bir servis hesabı JSON'u değil."; exit 1; }
+            tar --append -f release.tar --mode=0644 firebase-service-account.json
+            rm -f firebase-service-account.json
+          fi
+          gzip -c release.tar | ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes "deploy@$HOST"
