@@ -5,6 +5,7 @@ const Shot = require('../models/Shot');
 const ShotEvent = require('../models/ShotEvent');
 const { requireAuth } = require('../middleware/auth');
 const { createCounter } = require('../middleware/rateLimit');
+const notify = require('../lib/notify');
 
 /**
  * Ekran görüntüsü paylaşımı (Sosyal → Ekran görüntüleri). Yalnızca giriş yapmış üyeler görür.
@@ -184,8 +185,10 @@ router.post('/:id/comments', async (req, res) => {
         const exists = await Shot.exists({ _id: req.params.id });
         return exists ? res.status(400).json({ error: 'Bu ekran görüntüsü yorum sınırına ulaştı.' }) : res.status(404).json({ error: 'Ekran görüntüsü bulunamadı.' });
     }
-    if (shot.author !== req.user.username)
+    if (shot.author !== req.user.username) {
         await ShotEvent.create({ to: shot.author, from: req.user.username, shot: shot._id, kind: 'comment', text: text.slice(0, 120) });
+        notify.shotEvent(shot.author, req.user.username, shot._id, 'comment', text);
+    }
     res.status(201).json({ id: String(comment._id), author: comment.author, text, createdAt: comment.createdAt, canDelete: true, commentCount: shot.comments.length });
 });
 
@@ -210,7 +213,11 @@ router.post('/:id/like', async (req, res) => {
     if (shot.author !== req.user.username) {
         const key = { to: shot.author, from: req.user.username, shot: shot._id, kind: 'like' };
         if (req.body?.like === false) await ShotEvent.deleteOne(key);
-        else await ShotEvent.updateOne(key, { $setOnInsert: { ...key, createdAt: new Date() } }, { upsert: true });
+        else {
+            // Yalnızca ilk beğenide bildirim (beğen-vazgeç-beğen tekrarı yağdırmasın)
+            const r = await ShotEvent.updateOne(key, { $setOnInsert: { ...key, createdAt: new Date() } }, { upsert: true });
+            if (r.upsertedCount) notify.shotEvent(shot.author, req.user.username, shot._id, 'like');
+        }
     }
     res.json({ likes: shot.likes.length, liked: shot.likes.includes(req.user.username) });
 });

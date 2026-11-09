@@ -20,6 +20,10 @@ const userSchema = new mongoose.Schema({
     tokenVersion: { type: Number, default: 0 }, // şifre değişince artar; eski oturumlar kapanır
     // Adminler için: yeni kayıt isteği telefona push bildirimi olarak gelsin mi (vulu Sosyal)
     notifyRegistrations: { type: Boolean, default: true },
+    // vulu Sosyal telefon bildirimleri: mesaj, arkadaşlık istekleri, ekran görüntüsüne beğeni/yorum
+    notifyMessages: { type: Boolean, default: true },
+    notifyFriends: { type: Boolean, default: true },
+    notifyShots: { type: Boolean, default: true },
 
     // Profil
     bio: { type: String, default: '', maxlength: 300 },

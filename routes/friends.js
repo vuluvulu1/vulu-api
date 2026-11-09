@@ -2,6 +2,7 @@ const express = require('express');
 const User = require('../models/User');
 const Friendship = require('../models/Friendship');
 const { requireAuth } = require('../middleware/auth');
+const notify = require('../lib/notify');
 
 // Arkadaşlık istekleri. Arkadaş olanlar birbirinin ne oynadığını görür (bkz. GET /users/presence).
 const router = express.Router();
@@ -37,6 +38,7 @@ router.post('/requests', async (req, res) => {
         existing.status = 'accepted';
         existing.acceptedAt = new Date();
         await existing.save();
+        notify.friendEvent(target.username, me, true);
         return res.json({ status: 'accepted', username: target.username });
     }
     if (await Friendship.countDocuments({ from: me, status: 'pending' }) >= MAX_PENDING_OUT)
@@ -44,6 +46,7 @@ router.post('/requests', async (req, res) => {
     try { await Friendship.create({ ...pair, from: me }); }
     catch (err) { if (err.code !== 11000) throw err; }   // aynı anda iki istek: biri kalır
     res.status(201).json({ status: 'pending', username: target.username });
+    notify.friendEvent(target.username, me, false);
 });
 
 // POST /friends/requests/:username/accept
@@ -55,6 +58,7 @@ router.post('/requests/:username/accept', async (req, res) => {
     row.acceptedAt = new Date();
     await row.save();
     res.json({ status: 'accepted', username: req.params.username });
+    notify.friendEvent(row.from, me, true);
 });
 
 // DELETE /friends/requests/:username — gelen isteği reddet ya da gönderdiğini geri al

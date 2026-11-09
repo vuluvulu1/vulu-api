@@ -128,7 +128,7 @@ router.get('/me', requireAuth, async (req, res) => {
     const mc = req.user.minecraft?.uuid ? { uuid: req.user.minecraft.uuid, name: req.user.minecraft.name, verifiedAt: req.user.minecraft.verifiedAt } : null;
     res.json({ ...publicProfile(req.user, counts[req.user.username] || 0, roles), email: req.user.email || '', pendingEmail: pending,
         minecraft: mc, ownershipRequired: await settings.get('requireMinecraftOwnership'),
-        notifications: { registrations: req.user.notifyRegistrations !== false } });
+        notifications: notificationPrefs(req.user) });
 });
 
 // ── Push bildirimi alan cihazlar (vulu Sosyal) ───────────────────────
@@ -157,10 +157,16 @@ router.delete('/me/devices/:token', requireAuth, async (req, res) => {
     res.json({ success: true });
 });
 
-// PUT /users/me/notifications { registrations?: boolean } — telefona gelen bildirim tercihleri
+// Telefona gelen bildirim tercihleri (alan adı → User alanı). Varsayılan hepsi açık.
+const NOTIFY_FIELDS = { registrations: 'notifyRegistrations', messages: 'notifyMessages', friends: 'notifyFriends', shots: 'notifyShots' };
+const notificationPrefs = user => Object.fromEntries(Object.entries(NOTIFY_FIELDS).map(([k, f]) => [k, user[f] !== false]));
+
+// PUT /users/me/notifications { registrations?, messages?, friends?, shots?: boolean }
 router.put('/me/notifications', requireAuth, async (req, res) => {
-    if (typeof req.body.registrations === 'boolean') await setFields(req.user, { notifyRegistrations: req.body.registrations });
-    res.json({ registrations: req.user.notifyRegistrations !== false });
+    const fields = {};
+    for (const [k, f] of Object.entries(NOTIFY_FIELDS)) if (typeof req.body?.[k] === 'boolean') fields[f] = req.body[k];
+    if (Object.keys(fields).length) await setFields(req.user, fields);
+    res.json(notificationPrefs(req.user));
 });
 
 // POST /users/me/minecraft { accessToken } — Microsoft hesabını bağlar. Launcher'ın Microsoft girişinden aldığı

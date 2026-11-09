@@ -6,6 +6,7 @@ const Message = require('../models/Message');
 const MessageKey = require('../models/MessageKey');
 const { requireAuth } = require('../middleware/auth');
 const { createCounter } = require('../middleware/rateLimit');
+const notify = require('../lib/notify');
 
 /**
  * Uçtan uca şifreli direkt mesajlar. Şifreleme ve çözme yalnızca launcher'da yapılır; burada içerik okunamaz.
@@ -92,6 +93,7 @@ router.post('/', async (req, res) => {
         senderKeyId: b.senderKeyId, recipientKeyId: b.recipientKeyId,
     });
     res.status(201).json(toClient(message));
+    notify.messageReceived(recipient.username, req.user.username);
 });
 
 // GET /messages/conversations — kiminle yazışıldığı, son mesaj zamanı, okunmamış sayısı
@@ -139,6 +141,7 @@ router.post('/with/:username/read', async (req, res) => {
     if (!NAME.test(req.params.username)) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
     const result = await Message.updateMany({ from: req.params.username, to: req.user.username, readAt: null }, { $set: { readAt: new Date() } });
     res.json({ updated: result.modifiedCount });
+    if (result.modifiedCount) notify.messagesRead(req.user.username, req.params.username);
 });
 
 // DELETE /messages/:id — kendi gönderdiğim mesajı herkesten sil
