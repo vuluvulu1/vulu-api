@@ -14,6 +14,8 @@ const Pack = require('../models/Pack');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const settings = require('../lib/settings');
 const { createUserFromRegistration } = require('../lib/registrations');
+const notify = require('../lib/notify');
+const Device = require('../models/Device');
 
 const router = express.Router();
 router.use(requireAuth, requireAdmin);
@@ -161,6 +163,7 @@ router.patch('/users/:id', async (req, res) => {
     if (set.passwordHash || set.isActive === false) {
         await GameSession.deleteMany({ username: user.username });
         await PanelToken.deleteMany({ username: user.username });
+        await Device.deleteMany({ username: user.username });
     }
     res.json(userToClient(updated));
 });
@@ -179,6 +182,7 @@ router.delete('/users/:id', async (req, res) => {
     await require('../models/Banner').deleteOne({ username: user.username });
     await GameSession.deleteMany({ username: user.username });
     await PanelToken.deleteMany({ username: user.username });
+    await Device.deleteMany({ username: user.username });
     await MessageKey.deleteOne({ username: user.username });
     await require('../models/Friendship').deleteMany({ $or: [{ a: user.username }, { b: user.username }] });
     await Message.deleteMany({ $or: [{ from: user.username }, { to: user.username }] });
@@ -267,6 +271,7 @@ router.post('/registrations/:id/approve', async (req, res) => {
 
     const { user, error } = await createUserFromRegistration(reg);
     if (error) return res.status(409).json({ error });
+    notify.registrationResolved(reg._id, reg.username, 'approved', req.user.username);
     res.json({ success: true, username: user.username });
 });
 
@@ -287,8 +292,9 @@ router.put('/settings', async (req, res) => {
 // POST /admin/registrations/:id/reject — isteği siler
 router.post('/registrations/:id/reject', async (req, res) => {
     if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ error: 'İstek bulunamadı.' });
-    const result = await Registration.deleteOne({ _id: req.params.id });
-    if (!result.deletedCount) return res.status(404).json({ error: 'İstek bulunamadı. Başka bir admin işlem yapmış olabilir.' });
+    const reg = await Registration.findOneAndDelete({ _id: req.params.id });
+    if (!reg) return res.status(404).json({ error: 'İstek bulunamadı. Başka bir admin işlem yapmış olabilir.' });
+    notify.registrationResolved(reg._id, reg.username, 'rejected', req.user.username);
     res.json({ success: true });
 });
 

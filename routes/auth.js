@@ -10,6 +10,7 @@ const { signToken } = require('../middleware/auth');
 const { mailEnabled, sendMail, verificationMail } = require('../lib/mail');
 const settings = require('../lib/settings');
 const { createUserFromRegistration } = require('../lib/registrations');
+const notify = require('../lib/notify');
 
 const router = express.Router();
 
@@ -125,7 +126,8 @@ router.post('/register', async (req, res) => {
 
     // E-posta gönderimi kurulu değilse (ör. eski sunucu) istek doğrudan admin onayına düşer
     if (!mailEnabled()) {
-        await Registration.create({ username, email, passwordHash, ip });
+        const pending = await Registration.create({ username, email, passwordHash, ip });
+        notify.registrationPending(pending);
         return res.status(201).json({ success: true, verifyEmail: false, autoApprove: false });
     }
 
@@ -157,6 +159,8 @@ router.post('/verify-email', async (req, res) => {
             if (error) return res.status(409).json({ error });
             return res.json({ success: true, username: user.username, kind: 'registration', approved: true });
         }
+        // Artık onaylanabilir: adminlerin telefonuna bildirim
+        notify.registrationPending(reg);
         return res.json({ success: true, username: reg.username, kind: 'registration', approved: false });
     }
 
