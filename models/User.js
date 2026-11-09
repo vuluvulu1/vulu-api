@@ -18,6 +18,8 @@ const userSchema = new mongoose.Schema({
     isAdmin: { type: Boolean, default: false },
     roles: { type: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Role' }], default: [] },
     tokenVersion: { type: Number, default: 0 }, // şifre değişince artar; eski oturumlar kapanır
+    // Adminler için: yeni kayıt isteği telefona push bildirimi olarak gelsin mi (vulu Sosyal)
+    notifyRegistrations: { type: Boolean, default: true },
 
     // Profil
     bio: { type: String, default: '', maxlength: 300 },

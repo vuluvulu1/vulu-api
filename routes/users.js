@@ -11,6 +11,7 @@ const PanelToken = require('../models/PanelToken');
 const Presence = require('../models/Presence');
 const Friendship = require('../models/Friendship');
 const Registration = require('../models/Registration');
+const Device = require('../models/Device');
 const { mailEnabled, sendMail, emailChangeMail } = require('../lib/mail');
 const { offlineUuid, baseUrlOf } = require('../lib/yggdrasil');
 const { tokenHash } = require('./yggdrasil');
@@ -126,7 +127,40 @@ router.get('/me', requireAuth, async (req, res) => {
     const pending = req.user.pendingEmail && req.user.emailTokenExpires > new Date() ? req.user.pendingEmail : null;
     const mc = req.user.minecraft?.uuid ? { uuid: req.user.minecraft.uuid, name: req.user.minecraft.name, verifiedAt: req.user.minecraft.verifiedAt } : null;
     res.json({ ...publicProfile(req.user, counts[req.user.username] || 0, roles), email: req.user.email || '', pendingEmail: pending,
-        minecraft: mc, ownershipRequired: await settings.get('requireMinecraftOwnership') });
+        minecraft: mc, ownershipRequired: await settings.get('requireMinecraftOwnership'),
+        notifications: { registrations: req.user.notifyRegistrations !== false } });
+});
+
+// ── Push bildirimi alan cihazlar (vulu Sosyal) ───────────────────────
+const FCM_TOKEN = /^[A-Za-z0-9_:\-]{20,4096}$/;
+const MAX_DEVICES = 10;
+
+// POST /users/me/devices { token, platform: 'android' } — girişten sonra telefon kendini kaydeder. Aynı token başka
+// bir hesaptaysa (telefonda hesap değişti) bu hesaba geçer. Bir hesapta en fazla 10 cihaz; fazlası en eskiden silinir.
+router.post('/me/devices', requireAuth, async (req, res) => {
+    const token = typeof req.body.token === 'string' ? req.body.token.trim() : '';
+    if (!FCM_TOKEN.test(token)) return res.status(400).json({ error: 'Cihaz token\'ı geçersiz.' });
+    const platform = req.body.platform === undefined ? 'android' : req.body.platform;
+    if (platform !== 'android') return res.status(400).json({ error: 'Desteklenmeyen platform.' });
+
+    await Device.updateOne({ token },
+        { $set: { username: req.user.username, platform, lastSeenAt: new Date() }, $setOnInsert: { createdAt: new Date() } },
+        { upsert: true });
+    const extra = await Device.find({ username: req.user.username }).sort({ lastSeenAt: -1 }).skip(MAX_DEVICES).select('_id').lean();
+    if (extra.length) await Device.deleteMany({ _id: { $in: extra.map(d => d._id) } });
+    res.json({ success: true });
+});
+
+// DELETE /users/me/devices/:token — çıkış yapınca telefon bildirim almayı bırakır
+router.delete('/me/devices/:token', requireAuth, async (req, res) => {
+    await Device.deleteOne({ token: String(req.params.token), username: req.user.username });
+    res.json({ success: true });
+});
+
+// PUT /users/me/notifications { registrations?: boolean } — telefona gelen bildirim tercihleri
+router.put('/me/notifications', requireAuth, async (req, res) => {
+    if (typeof req.body.registrations === 'boolean') await setFields(req.user, { notifyRegistrations: req.body.registrations });
+    res.json({ registrations: req.user.notifyRegistrations !== false });
 });
 
 // POST /users/me/minecraft { accessToken } — Microsoft hesabını bağlar. Launcher'ın Microsoft girişinden aldığı
@@ -378,6 +412,8 @@ router.post('/me/password', requireAuth, async (req, res) => {
     });
     await GameSession.deleteMany({ username: req.user.username });
     await PanelToken.deleteMany({ username: req.user.username });
+    // Telefonlar da yeniden giriş yapana kadar bildirim almaz (şifresi ele geçirilen hesapta saldırganınki dahil)
+    await Device.deleteMany({ username: req.user.username });
     res.json({ success: true, token: signToken(req.user) });
 });
 
