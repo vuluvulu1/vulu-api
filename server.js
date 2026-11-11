@@ -13,6 +13,9 @@ app.use(express.json({ limit: '2mb' }));
 // API bir vekil sunucunun (VDS'te Caddy, Render'da onun vekili) arkasında; kayıt sınırı için gerçek istemci IP'si req.ip'e gelsin
 app.set('trust proxy', 1);
 
+// Yedek yoldan (Cloudflare Worker) gelen isteklerde kullanıcının gerçek IP'si: lib/relay.js
+app.use(require('./lib/relay').relayClientIp);
+
 // Tarayıcıya yönelik temel güvenlik başlıkları (API yalnızca JSON ve resim döndürür)
 app.use((req, res, next) => {
     res.set({
