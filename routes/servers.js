@@ -4,6 +4,8 @@ const Server = require('../models/Server');
 const Pack = require('../models/Pack');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 const { visiblePacksQuery } = require('../lib/access');
+const { createCounter } = require('../middleware/rateLimit');
+const mcchat = require('../lib/mcchat');
 
 const router = express.Router();
 const HOST = /^(?=.{1,120}$)[A-Za-z0-9](?:[A-Za-z0-9.\-]*[A-Za-z0-9])?(?::(\d{1,5}))?$/;
@@ -13,6 +15,39 @@ const MAX_SERVERS = 50;
 const toClient = s => ({
     id: String(s._id), name: s.name, address: s.address, description: s.description || '',
     packId: s.packId || null, mcVersion: s.mcVersion || '', order: s.order || 0,
+    chat: mcchat.servesAddress(s.address),
+});
+
+// Launcher'dan oyuna mesaj: kişi başına saniyede bir, dakikada 20
+const chatFast = createCounter({ windowMs: 1000, max: 1 });
+const chatMinute = createCounter({ windowMs: 60 * 1000, max: 20 });
+
+/** Sohbeti olan ve bu kullanıcının görebildiği sunucu (paketi rolle kısıtlıysa o paketi görebilmeli). */
+async function chatServer(req, res) {
+    if (!mongoose.isValidObjectId(req.params.id)) { res.status(404).json({ error: 'Sunucu bulunamadı.' }); return null; }
+    const server = await Server.findById(req.params.id).lean();
+    if (!server || !mcchat.servesAddress(server.address)) { res.status(404).json({ error: 'Bu sunucunun sohbeti yok.' }); return null; }
+    if (server.packId && !req.user.isAdmin && !(await Pack.exists({ _id: server.packId, ...visiblePacksQuery(req.user) }))) {
+        res.status(404).json({ error: 'Sunucu bulunamadı.' }); return null;
+    }
+    return server;
+}
+
+// GET /servers/:id/chat?after=<seq> — oyun içi sohbet (son 50, ya da after'dan sonrakiler)
+router.get('/:id/chat', requireAuth, async (req, res) => {
+    if (!await chatServer(req, res)) return;
+    res.json(mcchat.since(req.query.after));
+});
+
+// POST /servers/:id/chat { text } — oyunda herkese "[Launcher] ad: mesaj"
+router.post('/:id/chat', requireAuth, async (req, res) => {
+    if (!await chatServer(req, res)) return;
+    if (chatFast.hit(req.user.username) || chatMinute.hit(req.user.username))
+        return res.status(429).json({ error: 'Çok hızlı yazıyorsun, biraz bekle.' });
+    const text = typeof req.body?.text === 'string' ? req.body.text : '';
+    if (!text.trim() || text.length > 200) return res.status(400).json({ error: 'Mesaj 1-200 karakter olmalı.' });
+    try { res.status(201).json(await mcchat.send(req.user.username, text)); }
+    catch (err) { res.status(503).json({ error: err.message }); }
 });
 
 async function clean(body) {
