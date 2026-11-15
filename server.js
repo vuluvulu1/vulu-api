@@ -63,6 +63,9 @@ mongoose.connect(process.env.MONGO_URI)
         catch (err) { console.error('Eski alanlar temizlenemedi:', err.message); }
         // Aynada eksik kalan paket dosyaları (ayna yeni açıldıysa ya da önceki indirme yarım kaldıysa) tamamlanır
         require('./routes/packs').syncMirror();
+        // vulu Pelerinleri dokuları (yoksa) yazılır; liderlik/sezon istatistikleri 5 dakikada bir okunmaya başlar
+        require('./lib/capes').seed().catch(err => console.error('Pelerinler yazılamadı:', err.message));
+        require('./lib/progress').start();
     })
     .catch(err => console.error('MongoDB bağlantı hatası:', err));
 
@@ -82,6 +85,8 @@ app.use('/stats', require('./routes/stats'));
 app.use('/curseforge', require('./routes/curseforge'));
 app.use('/download', require('./routes/download'));
 app.use('/radio', require('./routes/radio'));
+app.use('/progress', require('./routes/progress'));
+app.use('/map', require('./routes/map'));
 
 // Sağlık kontrolü
 app.get('/ping', (req, res) => res.json({ status: 'ok' }));

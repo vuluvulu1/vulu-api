@@ -187,7 +187,11 @@ router.delete('/users/:id', async (req, res) => {
     await require('../models/Friendship').deleteMany({ $or: [{ a: user.username }, { b: user.username }] });
     await Message.deleteMany({ $or: [{ from: user.username }, { to: user.username }] });
     await require('./shots').deleteAllBy(user.username);
-    if (user.skinHash && !(await User.exists({ skinHash: user.skinHash }))) await Skin.deleteOne({ hash: user.skinHash });
+    // Kullanıcının takılı ve dolaptaki skinleri: başka kimse kullanmıyorsa silinir (pelerin dokularına dokunulmaz)
+    const { isCapeHash } = require('../lib/capes');
+    for (const hash of new Set([user.skinHash, ...(user.wardrobe || []).map(w => w.hash)].filter(Boolean)))
+        if (!isCapeHash(hash) && !(await User.exists({ $or: [{ skinHash: hash }, { 'wardrobe.hash': hash }] }))) await Skin.deleteOne({ hash });
+    await require('mongoose').connection.db.collection('player_stats').deleteOne({ username: user.username });
     res.json({ success: true });
 });
 

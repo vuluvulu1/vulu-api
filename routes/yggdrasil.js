@@ -24,11 +24,11 @@ const forbidden = (res, message) => res.status(403).json({ error: 'ForbiddenOper
 
 async function userByProfileId(profileId) {
     // Kimlik addan türetilir; kullanıcı sayısı az olduğu için aktif kullanıcılar arasında aranır
-    const users = await User.find({ isActive: { $ne: false } }).select('username skinHash skinModel').lean();
+    const users = await User.find({ isActive: { $ne: false } }).select('username skinHash skinModel capeKey').lean();
     return users.find(u => offlineUuid(u.username) === profileId) || null;
 }
 
-const activeUser = username => User.findOne({ username, isActive: { $ne: false } }).select('username skinHash skinModel').lean();
+const activeUser = username => User.findOne({ username, isActive: { $ne: false } }).select('username skinHash skinModel capeKey').lean();
 
 // GET /yggdrasil/ — API bilgisi ve imza doğrulama anahtarı
 router.get('/', async (req, res) => {

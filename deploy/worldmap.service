@@ -1,0 +1,29 @@
+# Canlı dünya haritası: vulu-resmi'nin bölge dosyalarından karoları çizer (lib/worldmap/render.js).
+# Makineyi (2 çekirdek, Minecraft sunucusu öncelikli) yormaması için en düşük öncelikle ve sınırlarla çalışır:
+#   Nice=19 + CPUSchedulingPolicy=idle: işlemciyi yalnızca boşta kalan zamanda kullanır
+#   CPUQuota=50%: en kötü durumda bile yarım çekirdekten fazlasını almaz
+#   IOSchedulingClass=idle: diski de yalnızca boşken okur
+#   MemoryMax: bir bölge ~90 MB; sınır aşılırsa iş durur, sunucu etkilenmez
+#   --max-seconds: bir tur en çok 4 dakika; kalan bir sonraki turda
+# Kurulum: /etc/systemd/system/ altına kopyala, `systemctl daemon-reload && systemctl enable --now worldmap.timer`
+[Unit]
+Description=vulu world map renderer
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=vuluapi
+Group=vuluapi
+WorkingDirectory=/srv/vulu-api/current
+ExecStart=/usr/bin/node lib/worldmap/render.js --world /srv/vulu-panel/instances/vulu-resmi/world --out /srv/vulu-api/shared/map --dim overworld --radius 6144 --max-seconds 240 --pause-ms 200
+Nice=19
+CPUSchedulingPolicy=idle
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=300M
+TimeoutStartSec=10min
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/srv/vulu-api/shared/map

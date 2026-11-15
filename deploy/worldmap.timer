@@ -1,0 +1,11 @@
+# Haritayı 10 dakikada bir günceller (yalnızca değişen parçalar çizilir; çoğu tur birkaç saniye sürer).
+[Unit]
+Description=vulu world map renderer (every 10 minutes)
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=10min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

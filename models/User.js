@@ -40,6 +40,16 @@ const userSchema = new mongoose.Schema({
     },
     skinHash: { type: String, default: '' },      // boş = varsayılan skin (Steve/Alex)
     skinModel: { type: String, enum: ['default', 'slim'], default: 'default' },
+    // Kayıtlı skinler (dolap): tek tıkla geçilir. Resimler Skin koleksiyonunda, hash ile
+    wardrobe: {
+        type: [{ hash: String, model: { type: String, enum: ['default', 'slim'], default: 'default' }, name: { type: String, maxlength: 32 }, addedAt: Date, _id: false }],
+        default: [],
+    },
+    // vulu Pelerinleri (lib/capes.js): kazanılanlar ve takılı olan ('' = yok). Oyunda herkese görünür
+    capes: { type: [{ key: String, earnedAt: Date, note: String, _id: false }], default: [] },
+    capeKey: { type: String, default: '' },
+    // Rozetler (lib/progress.js): sezon görevleri ve haftalık liderlik. count: aynı rozet kaç kez kazanıldı
+    badges: { type: [{ key: String, count: { type: Number, default: 1 }, earnedAt: Date, _id: false }], default: [] },
     lastSeenAt: { type: Date },
     createdAt: { type: Date, default: Date.now },
 });

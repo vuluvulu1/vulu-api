@@ -39,6 +39,10 @@ function publicProfile(user, packCount = 0, roles = new Map()) {
             : null,
         skinHash: user.skinHash || '',
         skinModel: user.skinModel === 'slim' ? 'slim' : 'default',
+        // vulu Pelerini (takılı olan) ve rozet sayısı; ayrıntılar /progress/user/:ad
+        capeKey: user.capeKey || '',
+        capeHash: (user.capeKey && require('../lib/capes').textureHash(user.capeKey)) || '',
+        badgeCount: (user.badges || []).length,
         createdAt: user.createdAt || null,
         lastSeenAt: user.lastSeenAt || null,
         packCount,
@@ -332,10 +336,34 @@ function skinSize(buffer) {
     return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
 }
 
-/** Artık hiçbir kullanıcının kullanmadığı skin resmi silinir. */
+/** Artık hiçbir kullanıcının kullanmadığı (ne takılı ne dolapta) skin resmi silinir. Pelerin dokularına dokunulmaz. */
 async function dropUnusedSkin(hash) {
-    if (hash && !(await User.exists({ skinHash: hash }))) await Skin.deleteOne({ hash });
+    if (!hash || require('../lib/capes').isCapeHash(hash)) return;
+    if (!(await User.exists({ $or: [{ skinHash: hash }, { 'wardrobe.hash': hash }] }))) await Skin.deleteOne({ hash });
 }
+
+const WARDROBE_MAX = 12;
+
+/** Skini dolaba ekler (zaten varsa beden tipini günceller). Dolap doluysa en eski, takılı olmayan çıkar. */
+async function addToWardrobe(user, hash, model, name) {
+    const list = (user.wardrobe || []).map(w => ({ hash: w.hash, model: w.model, name: w.name, addedAt: w.addedAt }));
+    const existing = list.find(w => w.hash === hash);
+    if (existing) { existing.model = model; if (name) existing.name = name; }
+    else list.push({ hash, model, name: name || `Skin ${list.length + 1}`, addedAt: new Date() });
+    const dropped = [];
+    while (list.length > WARDROBE_MAX) {
+        const i = list.findIndex(w => w.hash !== user.skinHash && w.hash !== hash);
+        dropped.push(list.splice(i < 0 ? 0 : i, 1)[0].hash);
+    }
+    await setFields(user, { wardrobe: list });
+    for (const h of dropped) await dropUnusedSkin(h);
+}
+
+const wardrobeOf = user => ({
+    current: user.skinHash || '',
+    max: WARDROBE_MAX,
+    skins: (user.wardrobe || []).map(w => ({ hash: w.hash, model: w.model === 'slim' ? 'slim' : 'default', name: w.name || '', addedAt: w.addedAt || null })),
+});
 
 // PUT /users/me/skin?model=default|slim — gövde PNG'nin kendisi
 router.put('/me/skin', requireAuth, express.raw({ type: 'image/png', limit: SKIN_MAX_BYTES }), async (req, res) => {
@@ -349,9 +377,44 @@ router.put('/me/skin', requireAuth, express.raw({ type: 'image/png', limit: SKIN
     await Skin.updateOne({ hash }, { $setOnInsert: { hash, data: req.body } }, { upsert: true });
 
     const previous = req.user.skinHash;
-    await setFields(req.user, { skinHash: hash, skinModel: req.query.model === 'slim' ? 'slim' : 'default' });
+    const model = req.query.model === 'slim' ? 'slim' : 'default';
+    await setFields(req.user, { skinHash: hash, skinModel: model });
+    // Yüklenen her skin dolaba da girer; önceki skin dolapta durduğu için silinmez
+    await addToWardrobe(req.user, hash, model, typeof req.query.name === 'string' ? req.query.name.slice(0, 32) : '');
     if (previous && previous !== hash) await dropUnusedSkin(previous);
     res.json(publicProfile(req.user, 0, await roleMap()));
+});
+
+// ── Dolap: kayıtlı skinler arasında tek tıkla geçiş ─────────────────────
+// GET /users/me/wardrobe
+router.get('/me/wardrobe', requireAuth, async (req, res) => {
+    // Dolap özelliğinden önce yüklenmiş skin dolapta yoksa eklenir
+    if (req.user.skinHash && !(req.user.wardrobe || []).some(w => w.hash === req.user.skinHash))
+        await addToWardrobe(req.user, req.user.skinHash, req.user.skinModel, 'İlk skinim');
+    res.json(wardrobeOf(req.user));
+});
+
+// PUT /users/me/wardrobe/:hash { name?, model? } — dolaptaki bir skini giy (ya da adını/beden tipini değiştir: apply=false)
+router.put('/me/wardrobe/:hash', requireAuth, async (req, res) => {
+    const hash = String(req.params.hash);
+    const list = (req.user.wardrobe || []).map(w => ({ hash: w.hash, model: w.model, name: w.name, addedAt: w.addedAt }));
+    const item = list.find(w => w.hash === hash);
+    if (!item) return res.status(404).json({ error: 'Bu skin dolabında yok.' });
+    if (typeof req.body?.name === 'string') item.name = req.body.name.trim().slice(0, 32);
+    if (req.body?.model === 'slim' || req.body?.model === 'default') item.model = req.body.model;
+    const fields = { wardrobe: list };
+    if (req.body?.apply !== false) { fields.skinHash = item.hash; fields.skinModel = item.model === 'slim' ? 'slim' : 'default'; }
+    await setFields(req.user, fields);
+    res.json(wardrobeOf(req.user));
+});
+
+// DELETE /users/me/wardrobe/:hash — dolaptan çıkar (takılıysa varsayılan skine dönülmez, takılı kalır)
+router.delete('/me/wardrobe/:hash', requireAuth, async (req, res) => {
+    const hash = String(req.params.hash);
+    const list = (req.user.wardrobe || []).filter(w => w.hash !== hash).map(w => ({ hash: w.hash, model: w.model, name: w.name, addedAt: w.addedAt }));
+    await setFields(req.user, { wardrobe: list });
+    await dropUnusedSkin(hash);
+    res.json(wardrobeOf(req.user));
 });
 
 // PUT /users/me/skin/model { model } — yalnızca beden tipi (Klasik / İnce)
