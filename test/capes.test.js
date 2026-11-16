@@ -17,7 +17,7 @@ test('her pelerin 64×32 PNG ve dış yüzü dolu', () => {
 test('katalog anahtarları benzersiz ve sezon pelerini var', () => {
     const keys = capes.CATALOG.map(c => c.key);
     assert.strictEqual(new Set(keys).size, keys.length);
-    for (const s of require('../lib/progress').SEASONS) assert.ok(capes.exists(s.cape));
+    for (const s of require('../lib/progressConfig').DEFAULT.seasons) assert.ok(capes.exists(s.cape));
     assert.ok(capes.exists('haftalik-sampiyon'));
 });
 

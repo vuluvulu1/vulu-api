@@ -59,7 +59,35 @@ test('dönem farkı eksiye düşmez', () => {
 test('sezon 1 tanımlı ve rozetleri katalogda', () => {
     const s = p.currentSeason(new Date('2026-12-01T00:00:00Z'));
     assert.strictEqual(s.key, 's1');
-    for (const q of s.quests) assert.ok(p.BADGES.has(`s1-${q.key}`));
-    for (const c of p.CATEGORIES) assert.ok(p.BADGES.has(c.badge));
+    for (const q of s.quests) assert.ok(p.badgeDef(`s1-${q.key}`));
+    for (const c of p.categories()) assert.ok(p.badgeDef(c.badge));
     assert.strictEqual(p.currentSeason(new Date('2030-01-01')), null);
+});
+
+const settings = require('../lib/progressConfig');
+
+test('ayar doğrulaması: hatalı sezonlar reddedilir', () => {
+    const base = JSON.parse(JSON.stringify(settings.DEFAULT));
+    assert.throws(() => settings.normalize({ ...base, seasons: [{ ...base.seasons[0], endsAt: base.seasons[0].startsAt }] }), /bitiş/);
+    assert.throws(() => settings.normalize({ ...base, seasons: [base.seasons[0], { ...base.seasons[0], key: 's2' }] }), /çakışıyor/);
+    assert.throws(() => settings.normalize({ ...base, seasons: [{ ...base.seasons[0], key: 'Sezon 1' }] }), /anahtar/);
+    assert.throws(() => settings.normalize({ ...base, seasons: [{ ...base.seasons[0], quests: [{ key: 'x', name: 'X', stat: 'nope', target: 1 }] }] }), /istatistik/);
+    assert.throws(() => settings.normalize({ ...base, seasons: [{ ...base.seasons[0], cape: 'yok' }] }, k => k !== 'yok'), /pelerin/);
+});
+
+test('düzenlenen ayar seviye, görev ve dalları değiştirir; silinen görevin rozeti adıyla kalır', () => {
+    const base = JSON.parse(JSON.stringify(settings.DEFAULT));
+    try {
+        base.levelBase = 100;
+        base.xp.minute = 2;
+        base.weekly.categories[2].enabled = false;
+        base.seasons[0].quests = [{ key: 'kazici', name: 'Kazıcı', desc: '3 elmas', icon: '⛏', stat: 'diamonds', target: 3 }];
+        settings.set({ ...base, badgeArchive: { 's1-yola-cikis': { name: 'Yola çıkış', desc: 'eski', icon: '⏱' } } });
+        assert.strictEqual(p.levelOf(200).level, 1);   // 100·1·2 = 200
+        assert.strictEqual(p.xpOf({ playTicks: 1200 * 10 }), 20);
+        assert.deepStrictEqual(p.categories().map(c => c.key), ['playtime', 'diamonds', 'distance']);
+        assert.strictEqual(p.badgeDef('s1-kazici').name, 'Kazıcı');
+        assert.strictEqual(p.badgeDef('s1-yola-cikis').name, 'Yola çıkış');
+        assert.deepStrictEqual(p.questRaw(settings.get().seasons[0].quests[0]), { stat: 'diamonds', target: 3, scale: 1, unit: 'elmas' });
+    } finally { settings.set(settings.DEFAULT); }
 });

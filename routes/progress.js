@@ -37,13 +37,31 @@ router.get('/capes', (req, res) => {
 });
 
 // GET /progress/seasons — sezonlar ve görevleri
-router.get('/seasons', (req, res) => {
+router.get('/seasons', async (req, res) => {
     const now = new Date();
-    res.json(progress.SEASONS.map(s => ({
+    const config = await progress.settings.load();
+    res.json(config.seasons.map(s => ({
         key: s.key, name: s.name, startsAt: s.startsAt, endsAt: s.endsAt, cape: s.cape, capeLevel: s.capeLevel,
         current: new Date(s.startsAt) <= now && now < new Date(s.endsAt),
-        quests: s.quests.map(q => ({ key: q.key, name: q.name, desc: q.desc, icon: q.icon, target: q.target })),
+        quests: s.quests.map(q => ({ key: q.key, name: q.name, desc: q.desc, icon: q.icon, stat: q.stat, target: q.target })),
     })));
+});
+
+// GET /progress/admin/config — admin: sezonlar, görevler, seviye/XP ve haftalık dallar (düzenleme ekranı için)
+router.get('/admin/config', requireAuth, requireAdmin, async (req, res) => {
+    const config = await progress.settings.load(true);
+    res.json({
+        config: { ...config, badgeArchive: undefined },
+        stats: Object.entries(progress.settings.STATS).map(([key, s]) => ({ key, label: s.label, unit: s.unit })),
+        capes: capes.CATALOG.map(c => ({ key: c.key, name: c.name })),
+    });
+});
+
+// PUT /progress/admin/config { config } — admin: kaydeder (hatalıysa 400 ve açıklama)
+router.put('/admin/config', requireAuth, requireAdmin, async (req, res) => {
+    const config = await progress.settings.save(req.body && req.body.config, req.user.username);
+    cache = new Map();
+    res.json({ config: { ...config, badgeArchive: undefined } });
 });
 
 /** Kullanıcının ilerlemesi + pelerinleri + rozetleri. */
