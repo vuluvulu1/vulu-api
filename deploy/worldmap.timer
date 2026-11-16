@@ -1,11 +1,12 @@
-# Haritayı 10 dakikada bir günceller (yalnızca değişen parçalar çizilir; çoğu tur birkaç saniye sürer).
+# Haritayı 2 dakikada bir günceller. Yalnızca son turdan beri kaydedilmiş parçalar çizilir; değişiklik yoksa tur
+# 1 saniyenin altında biter. Minecraft sunucusu blokları ~5 dakikada bir kaydettiği için arazi en çok birkaç dakika geriden gelir.
 [Unit]
-Description=vulu world map renderer (every 10 minutes)
+Description=vulu world map renderer (every 2 minutes)
 
 [Timer]
 OnBootSec=5min
-OnUnitInactiveSec=10min
-RandomizedDelaySec=30
+OnUnitInactiveSec=2min
+RandomizedDelaySec=10
 
 [Install]
 WantedBy=timers.target

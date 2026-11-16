@@ -45,9 +45,12 @@ let pending = null;
 const POS = /\[(-?[\d.]+)d, (-?[\d.]+)d, (-?[\d.]+)d\]/;
 const DIM = /"(?:minecraft:)?([a-z_]+)"/;
 
-/** Çevrimiçi oyuncular ve konumları; RCON en çok 5 saniyede bir sorulur. */
+/**
+ * Çevrimiçi oyuncular ve konumları. RCON en çok 1,5 saniyede bir sorulur (kaç launcher bakarsa baksın):
+ * oyuncu başına iki küçük komut, sunucuya yükü yok denecek kadar az.
+ */
 async function readPositions() {
-    if (Date.now() - positions.at < 5000) return positions.players;
+    if (Date.now() - positions.at < 1500) return positions.players;
     if (pending) return pending;
     pending = (async () => {
         try {
