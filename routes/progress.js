@@ -53,7 +53,7 @@ router.get('/admin/config', requireAuth, requireAdmin, async (req, res) => {
     res.json({
         config: { ...config, badgeArchive: undefined },
         stats: Object.entries(progress.settings.STATS).map(([key, s]) => ({ key, label: s.label, unit: s.unit })),
-        capes: capes.CATALOG.map(c => ({ key: c.key, name: c.name })),
+        capes: capes.adminList().map(c => ({ key: c.key, name: c.name })),
     });
 });
 
@@ -67,11 +67,12 @@ router.put('/admin/config', requireAuth, requireAdmin, async (req, res) => {
 /** Kullanıcının ilerlemesi + pelerinleri + rozetleri. */
 async function full(user, baseUrl) {
     const p = await progress.progressOf(user.username);
-    const owned = new Set((user.capes || []).map(c => c.key));
     return {
         ...p,
         capeKey: user.capeKey || '',
-        capes: capes.catalog(baseUrl).map(c => ({ ...c, owned: owned.has(c.key), earnedAt: (user.capes || []).find(x => x.key === c.key)?.earnedAt || null })),
+        // Adminlere özel pelerinler yalnızca adminlere listelenir
+        capes: capes.catalog(baseUrl).filter(c => !c.adminOnly || user.isAdmin)
+            .map(c => ({ ...c, owned: capes.owns(user, c.key), earnedAt: (user.capes || []).find(x => x.key === c.key)?.earnedAt || null })),
         badges: (user.badges || []).map(progress.badgeInfo),
     };
 }
@@ -81,7 +82,7 @@ router.get('/me', requireAuth, async (req, res) => res.json(await full(req.user,
 
 // GET /progress/user/:username — başkasının seviyesi, sezonu ve rozetleri (profil)
 router.get('/user/:username', requireAuth, async (req, res) => {
-    const user = await User.findOne({ username: String(req.params.username), isActive: true }).select('username capes capeKey badges').lean();
+    const user = await User.findOne({ username: String(req.params.username), isActive: true }).select('username capes capeKey badges isAdmin').lean();
     if (!user) return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
     const data = await full(user, baseUrlOf(req));
     data.capes = data.capes.filter(c => c.owned);
@@ -91,7 +92,7 @@ router.get('/user/:username', requireAuth, async (req, res) => {
 // PUT /progress/me/cape { key } — kazanılmış bir pelerini tak ('' = çıkar)
 router.put('/me/cape', requireAuth, async (req, res) => {
     const key = typeof req.body?.key === 'string' ? req.body.key : '';
-    if (key && !(req.user.capes || []).some(c => c.key === key)) return res.status(403).json({ error: 'Bu pelerini henüz kazanmadın.' });
+    if (key && !capes.owns(req.user, key)) return res.status(403).json({ error: 'Bu pelerini henüz kazanmadın.' });
     await User.updateOne({ _id: req.user._id }, { $set: { capeKey: key } });
     req.user.capeKey = key;
     res.json(await full(req.user, baseUrlOf(req)));
@@ -114,6 +115,54 @@ router.delete('/capes/grant', requireAuth, requireAdmin, async (req, res) => {
     await capes.revoke(User, username, key);
     cache = new Map();
     res.json({ success: true });
+});
+
+// ── Admin: pelerin kataloğu ──────────────────────────────────────────────
+const adminCapes = async req => {
+    const counts = await capes.ownerCounts();
+    return {
+        capes: capes.adminList().map(c => ({
+            ...c, texture: `${baseUrlOf(req)}/yggdrasil/textures/${c.hash}`,
+            owners: c.adminOnly ? null : counts[c.key] || 0,
+        })),
+        emblems: Object.entries(capes.EMBLEM_NAMES).map(([key, name]) => ({ key, name })),
+        arts: Object.entries(capes.ART_NAMES).map(([key, name]) => ({ key, name })),
+    };
+};
+
+// GET /progress/admin/capes — bütün pelerinler (desen, sahip sayısı), amblem ve hazır çizim seçenekleri
+router.get('/admin/capes', requireAuth, requireAdmin, async (req, res) => res.json(await adminCapes(req)));
+
+// POST /progress/admin/capes/preview { design | art | png } — kaydetmeden doku (base64 PNG)
+router.post('/admin/capes/preview', requireAuth, requireAdmin, (req, res) => {
+    res.json({ data: capes.preview(req.body || {}).toString('base64') });
+});
+
+// POST /progress/admin/capes { key, name, earn, order, adminOnly, design | art | png } — yeni pelerin
+router.post('/admin/capes', requireAuth, requireAdmin, async (req, res) => {
+    await capes.save(req.body || {}, true);
+    cache = new Map();
+    res.json(await adminCapes(req));
+});
+
+// PUT /progress/admin/capes/:key — düzenle (doku kaynağı verilmezse doku aynı kalır)
+router.put('/admin/capes/:key', requireAuth, requireAdmin, async (req, res) => {
+    await capes.save({ ...(req.body || {}), key: req.params.key }, false);
+    cache = new Map();
+    res.json(await adminCapes(req));
+});
+
+// DELETE /progress/admin/capes/:key — sil (sahiplerinden alınır)
+router.delete('/admin/capes/:key', requireAuth, requireAdmin, async (req, res) => {
+    await capes.remove(String(req.params.key));
+    cache = new Map();
+    res.json(await adminCapes(req));
+});
+
+// GET /progress/admin/capes/:key/owners — kimlerde var
+router.get('/admin/capes/:key/owners', requireAuth, requireAdmin, async (req, res) => {
+    if (!capes.exists(req.params.key)) return res.status(404).json({ error: 'Pelerin bulunamadı.' });
+    res.json(await capes.owners(req.params.key));
 });
 
 module.exports = router;
