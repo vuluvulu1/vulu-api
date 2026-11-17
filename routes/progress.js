@@ -61,6 +61,10 @@ router.get('/admin/config', requireAuth, requireAdmin, async (req, res) => {
 router.put('/admin/config', requireAuth, requireAdmin, async (req, res) => {
     const config = await progress.settings.save(req.body && req.body.config, req.user.username);
     cache = new Map();
+    // Seviye öneki ayarı değişmiş olabilir: oyundakilere hemen yeniden uygulanır
+    const levelTags = require('../lib/levelTags');
+    levelTags.reset();
+    levelTags.sync(progress.levelsOf);
     res.json({ config: { ...config, badgeArchive: undefined } });
 });
 
