@@ -64,7 +64,10 @@ mongoose.connect(process.env.MONGO_URI)
         // Aynada eksik kalan paket dosyaları (ayna yeni açıldıysa ya da önceki indirme yarım kaldıysa) tamamlanır
         require('./routes/packs').syncMirror();
         // vulu Pelerinleri dokuları (yoksa) yazılır; liderlik/sezon istatistikleri 5 dakikada bir okunmaya başlar
-        require('./lib/capes').seed().catch(err => console.error('Pelerinler yazılamadı:', err.message));
+        const capes = require('./lib/capes');
+        capes.seed().catch(err => console.error('Pelerinler yazılamadı:', err.message));
+        // Katalog başka bir yoldan (betik, ikinci bir API) değişirse de görünsün: 2 dakikada bir yeniden okunur
+        setInterval(() => capes.seed().catch(err => console.error('Pelerinler okunamadı:', err.message)), 2 * 60 * 1000).unref();
         require('./lib/progress').start();
     })
     .catch(err => console.error('MongoDB bağlantı hatası:', err));

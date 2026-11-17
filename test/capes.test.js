@@ -49,5 +49,8 @@ test('önizleme: desen, hazır çizim ve PNG; hatalı PNG reddedilir', () => {
     assert.throws(() => capes.preview({ design: { base: 'kırmızı' } }), /Renkler/);
     const wrong = PNG.sync.write(new PNG({ width: 64, height: 64 })).toString('base64');
     assert.throws(() => capes.preview({ png: wrong }), /64×32/);
+    assert.throws(() => capes.preview({ png: PNG.sync.write(new PNG({ width: 96, height: 48 })).toString('base64') }), /katı/);
+    // HD: 64×32'nin tam katları kabul edilir
+    for (const k of [2, 4, 8]) assert.strictEqual(size(capes.preview({ png: PNG.sync.write(new PNG({ width: 64 * k, height: 32 * k })).toString('base64') })), `${64 * k}x${32 * k}`);
     assert.throws(() => capes.preview({ png: Buffer.from('nope').toString('base64') }), /PNG/);
 });
